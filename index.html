@@ -3020,7 +3020,7 @@ document.addEventListener("click", async e => {
     case "del": S.players = S.players.filter(p => p.id !== pid); renumber(); break;
     case "up": { const i = S.players.findIndex(p => p.id === pid); if (i > 0){ [S.players[i-1], S.players[i]] = [S.players[i], S.players[i-1]]; renumber(); } break; }
     case "applySetup": applySetup(false); break;
-    case "script": selectScript(t.dataset.sid); pickOpen = false; if (S.script === "custom" && !(S.custom||[]).length) S.custom = SCRIPTS[0].roles.slice(); break;
+    case "script": selectScript(t.dataset.sid); pickOpen = false; closeDlg(); if (S.script === "custom" && !(S.custom||[]).length) S.custom = SCRIPTS[0].roles.slice(); break;
     case "draw": draw(); break;
     case "share": { const url = shareLink(); const box = document.getElementById("shareBox");
       let svg = ""; try{ const q = qrcode(0, "L"); q.addData(url); q.make(); svg = q.createSvgTag(4, 2); }catch(_){}
@@ -3281,10 +3281,10 @@ let USC = []; try{ USC = JSON.parse(localStorage.getItem("eigeneSkripte") || "[]
 function uscSave(){ try{ localStorage.setItem("eigeneSkripte", JSON.stringify(USC)); }catch(_){} }
 const allScripts = () => [...SCRIPTS, ...USC];
 const isUser = id => String(id || "").startsWith("u_");
-let pickOpen = false, ED = null, IMP = null, lvFilter = 0;
+let pickOpen = false, ED = null, IMP = null, lvFilter = 0, roleF = [];
 function scrCard(x, act, on){
   const st = x.stufe || 3, own = isUser(x.id);
-  return `<div class="card scr ${on ? "on" : ""}" role="button" tabindex="0" data-${act}="script" data-sid="${esc(x.id)}">
+  return `<div class="card scr ${on ? "on" : ""}" role="button" tabindex="0" data-${act}="${act === "act" ? "preview" : "script"}" data-sid="${esc(x.id)}">
     <h3>${esc(x.name)}</h3><div class="small muted">${esc(own ? "Eigenes Skript" : x.en)}</div>
     <div class="row small" style="margin:4px 0"><span class="pill lv${st}" title="Schwierigkeit ${st} von 5">${stars(st)} ${esc(LVNAME[st] || x.level || "")}</span><span class="pill">${x.min}–${x.max} Spieler</span><span class="pill">${(x.roles||[]).length} Rollen</span></div>
     <div class="small">${esc(x.desc || "")}</div>
@@ -3311,13 +3311,18 @@ function scriptPicker(){
   else if (IMP !== null) body = importCard();
   if (!pickOpen) return head + body + `<div class="grid" style="margin-top:8px">${scrCard(cur, "act", true)}</div>${isUser(cur.id) ? "" : `<p class="small muted" style="margin:4px 0">Anpassen? <button class="btn sm" data-act="edCopy" data-sid="${esc(cur.id)}">Als eigenes Skript kopieren</button></p>`}`;
   const chips = [0,1,2,3,4,5].map(l => `<button class="voter" aria-pressed="${lvFilter === l}" data-act="lvFilter" data-lv="${l}">${l ? stars(l) + " " + esc(LVNAME[l]) : "Alle"}</button>`).join("");
+  const fit = x => roleF.every(r => (x.roles || []).includes(r));
+  const roleSel = `<div class="row" style="margin-top:8px;align-items:center"><label for="roleAdd" class="small"><b>Mit Rolle:</b></label><select id="roleAdd" aria-label="Rolle zum Filtern wählen"><option value="">Rolle hinzufügen …</option>${["dorf","aussen","scherge","daemon"].map(g => `<optgroup label="${TEAMNAME[g]}">${ROLES.filter(r => r.team === g && !roleF.includes(r.id)).map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join("")}</optgroup>`).join("")}</select>
+    ${roleF.map(id => `<button class="voter" aria-pressed="true" data-act="roleDel" data-rid="${id}" aria-label="${esc(roleName(id))} aus dem Filter entfernen">${esc(roleName(id))} ✕</button>`).join("")}
+    ${roleF.length ? `<button class="btn sm" data-act="roleClear">Filter leeren</button><span class="small muted">${allScripts().filter(x => fit(x) && (!lvFilter || (x.stufe || 3) === lvFilter)).length} Skripte enthalten ${roleF.length > 1 ? "alle diese Rollen" : "diese Rolle"}</span>` : ""}</div>`;
   const groups = [1,2,3,4,5].filter(l => !lvFilter || l === lvFilter).map(l => {
-    const xs = SCRIPTS.filter(x => (x.stufe || 3) === l); if (!xs.length) return "";
+    const xs = SCRIPTS.filter(x => (x.stufe || 3) === l && fit(x)); if (!xs.length) return "";
     return `<h3 style="margin-top:12px">${stars(l)} ${esc(LVNAME[l])} <span class="small muted">· ${LVHINT[l]}</span></h3><div class="grid">${xs.map(x => scrCard(x, "act", x.id === cur.id)).join("")}</div>`;
   }).join("");
-  const own = USC.filter(x => !lvFilter || (x.stufe || 3) === lvFilter);
+  const own = USC.filter(x => (!lvFilter || (x.stufe || 3) === lvFilter) && fit(x));
   const ownH = `<h3 style="margin-top:12px">Eigene Skripte</h3>${own.length ? `<div class="grid">${own.map(x => scrCard(x, "act", x.id === cur.id)).join("")}</div>` : `<p class="small muted">Noch keine. Lege mit „+ Neues Skript“ eins an, kopiere ein vorhandenes oder importiere eine JSON-Datei aus dem offiziellen Skript-Werkzeug.</p>`}<div id="edBox"></div>`;
-  return head + body + `<div class="row" style="margin-top:8px">${chips}</div>${groups}${ownH}`;
+  const none = !groups && !own.length && roleF.length ? `<p class="hint small" style="margin-top:10px">Kein Skript enthält ${roleF.length > 1 ? "alle diese Rollen" : "diese Rolle"}. Entferne eine Rolle aus dem Filter oder lege mit „+ Neues Skript“ ein passendes an.</p>` : "";
+  return head + body + `<div class="row" style="margin-top:8px">${chips}</div>${roleSel}${groups}${none}${ownH}`;
 }
 function editorCard(){
   const x = ED, c = teamCounts(x.roles), w = scriptWarnings(x);
@@ -3358,17 +3363,43 @@ function download(name, text, type){
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
 const fileName = s => String(s || "skript").normalize("NFD").replace(/[^\w -]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "skript";
+function closeDlg(){ const dl = document.getElementById("dlg"); if (dl.open) dl.close(); }
 function selectScript(id){
   S.script = id; const x = scriptOf(id); S.sdef = isUser(id) ? JSON.parse(JSON.stringify(x)) : null;
+}
+// Vorschau eines Skripts im Dialog, Auswahl erst nach Bestätigen
+function scriptPreview(id){
+  const x = scriptOf(id); if (!x || x.id !== id) return;
+  const st = x.stufe || 3, rs = ROLES.filter(r => (x.roles || []).includes(r.id)), c = teamCounts(x.roles || []), n = S.players.length, d = DIST[n];
+  const cur = (S.script || "tb") === id, w = scriptWarnings(x);
+  const grp = g => { const xs = rs.filter(r => r.team === g); if (!xs.length) return "";
+    return `<h3 style="margin-top:10px">${TEAMNAME[g]} <span class="small muted">· ${xs.length}</span></h3><div class="rlist">${xs.map(r => `<div class="rl notip"><span class="disc ${["scherge","daemon"].includes(g) ? "evil" : ""}">${icon(r.id)}</span><div><b>${esc(r.name)}</b> <span class="small muted">${esc(r.timing)}</span><div class="small">${esc(r.ability)}</div></div></div>`).join("")}</div>`; };
+  const special = ["baron","pate","fang_gu","vigormortis"].filter(r => (x.roles || []).includes(r)).map(roleName);
+  document.getElementById("sheet").innerHTML = `<div class="notip"><div class="row" style="justify-content:space-between;align-items:flex-start"><div style="flex:1;min-width:0"><h2 style="margin:0">${esc(x.name)}</h2><div class="small muted">${esc(isUser(x.id) ? "Eigenes Skript" : x.en)}</div></div><button class="btn sm" data-act="close" aria-label="Schließen">✕</button></div>
+    <div class="row small" style="margin:6px 0"><span class="pill lv${st}">${stars(st)} ${esc(LVNAME[st] || "")}</span><span class="pill">${x.min}–${x.max} Spieler</span><span class="pill">${rs.length} Rollen</span></div>
+    <p style="margin:6px 0">${esc(x.desc || "")}</p>
+    <p class="small muted" style="margin:4px 0">${c.dorf} Dorfbewohner · ${c.aussen} Außenseiter · ${c.scherge} Schergen · ${c.daemon} ${c.daemon === 1 ? "Dämon" : "Dämonen"}: <b>${esc(rs.filter(r => r.team === "daemon").map(r => r.name).join(", "))}</b>. ${esc(LVHINT[st] ? "Schwierigkeit: " + LVHINT[st] + "." : "")}</p>
+    ${d ? `<p class="small" style="margin:4px 0">Bei euch ${n} Spielern: ${d[0]} Dorfbewohner, ${d[1]} Außenseiter, ${d[2]} ${d[2] === 1 ? "Scherge" : "Schergen"}, 1 Dämon${special.length ? ` (${esc(special.join(", "))} ${special.length > 1 ? "ändern" : "ändert"} die Außenseiter)` : ""}.</p>` : ""}
+    ${n && (n < x.min || n > x.max) ? `<div class="hint bad small">Gedacht für ${x.min} bis ${x.max} Spieler, ihr seid ${n}.</div>` : ""}
+    ${w.length ? `<div class="hint bad small">${w.map(esc).join("<br>")}</div>` : ""}
+    <div class="row" style="margin:10px 0"><button class="btn pri" data-act="script" data-sid="${esc(x.id)}" ${cur ? "disabled" : ""}>${cur ? "Ist schon gewählt" : "Dieses Skript wählen"}</button><button class="btn" data-act="edCopy" data-sid="${esc(x.id)}">Als eigenes Skript kopieren</button><button class="btn" data-act="close">Abbrechen</button></div>
+    ${["dorf","aussen","scherge","daemon"].map(grp).join("")}
+    <div class="row" style="margin-top:12px"><button class="btn pri" data-act="script" data-sid="${esc(x.id)}" ${cur ? "disabled" : ""}>${cur ? "Ist schon gewählt" : "Dieses Skript wählen"}</button><button class="btn" data-act="close">Abbrechen</button></div></div>`;
+  tipify(document.getElementById("sheet"));
+  const dl = document.getElementById("dlg"); dl.dataset.pid = ""; if (!dl.open) dl.showModal();
+  document.getElementById("sheet").scrollTop = 0;
 }
 // Aktionen der Skriptauswahl (Spielleiter). Gibt true zurück, wenn behandelt.
 async function scriptAct(a, t){
   const sid = t.dataset.sid;
   switch (a){
     case "pickToggle": pickOpen = !pickOpen; ED = null; IMP = null; return true;
+    case "preview": scriptPreview(sid); return "stop";
+    case "roleDel": roleF = roleF.filter(x => x !== t.dataset.rid); return true;
+    case "roleClear": roleF = []; return true;
     case "lvFilter": lvFilter = +t.dataset.lv; return true;
     case "edNew": ED = {id:"", name:"", desc:"", stufe:2, min:7, max:15, roles:[]}; IMP = null; return true;
-    case "edCopy": { const x = scriptOf(sid); ED = {id:"", name: x.name + " (Kopie)", desc: x.desc || "", stufe: x.stufe || 3, min: x.min, max: x.max, roles: (x.roles || []).slice()}; IMP = null; return true; }
+    case "edCopy": { closeDlg(); const x = scriptOf(sid); ED = {id:"", name: x.name + " (Kopie)", desc: x.desc || "", stufe: x.stufe || 3, min: x.min, max: x.max, roles: (x.roles || []).slice()}; IMP = null; return true; }
     case "edEdit": { const x = USC.find(s => s.id === sid); if (x){ ED = JSON.parse(JSON.stringify(x)); IMP = null; } return true; }
     case "edCancel": ED = null; return true;
     case "edSave": { const x = ED; x.name = (x.name || "").trim() || "Eigenes Skript"; x.min = Math.max(5, +x.min || 5); x.max = Math.min(20, Math.max(x.min, +x.max || 15)); x.stufe = +x.stufe || 3; x.level = LVNAME[x.stufe]; x.en = "Eigenes Skript";
@@ -3395,6 +3426,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("change", e => {
   const t = e.target;
+  if (t.id === "roleAdd" && t.value){ if (!roleF.includes(t.value)) roleF.push(t.value); render(); return; }
   if (t.id === "impFile" && t.files && t.files[0]){ const fr = new FileReader(); fr.onload = () => { const ta = document.getElementById("impScr"); if (ta) ta.value = fr.result; IMP = fr.result; }; fr.readAsText(t.files[0]); return; }
   if (!ED) return;
   if (t.dataset.edrole){ const id = t.dataset.edrole; ED.roles = ED.roles.filter(x => x !== id); if (t.checked) ED.roles.push(id); render(); return; }
