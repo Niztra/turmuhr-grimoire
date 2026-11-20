@@ -3563,7 +3563,7 @@ ${drunkish.length ? `<li>Vorsicht: In diesem Skript können Infos falsch sein, o
   if (!pages.length) pages.push(`<section class="page"><h1>Nichts ausgewählt</h1><p>Wähle in der App mindestens einen Teil aus.</p></section>`);
   return `<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(sc.name)} · Druckdateien</title><style>${PRINTCSS}</style></head><body>
 <div class="bar"><b>${esc(sc.name)}</b> · ${pages.length} Seiten A4 <button onclick="print()">Drucken oder als PDF speichern</button><span>Tipp: Ränder „Keine“, Hintergrundgrafiken an.</span></div>
-${pages.join("\n")}<script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");</script></body></html>`;
+${pages.join("\n")}</body>\n</html>`;
 }
 const PRINTCSS = `@import url('https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&display=swap');
 @page{size:A4;margin:0}*{box-sizing:border-box}
@@ -3822,4 +3822,4 @@ render();
 initStore();
 if (readShare()) offerShare();
 </script>
-<script>if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");</script></body></html>
+<script>if ("serviceWorker" in navigator){ const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update()).catch(() => {}); let done = false; navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !done){ done = true; location.reload(); } }); }</script></body></html>
