@@ -112,6 +112,29 @@ td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;font-s
 .rl{display:grid;grid-template-columns:52px 1fr;gap:10px;align-items:start}
 .rl .disc{width:52px;border-width:2px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+/* Spieler im Spielraum: alles auf einen Bildschirm, kein Scrollen */
+body.live{overflow:hidden}
+body.live .wrap{height:100vh;height:100dvh;display:flex;flex-direction:column;padding-block:6px 8px;box-sizing:border-box}
+body.live header.top h1,body.live header.top .row{display:none}
+body.live nav.tabs{margin:4px 0;padding:0 0 6px;position:static;overflow:visible}
+body.live nav.tabs button{flex:1;font-size:1rem;padding:10px}
+body.live main#view{flex:1;min-height:0;display:flex;flex-direction:column;gap:6px}
+.lv-card{background:var(--panel);border:1px solid var(--brass);border-radius:10px;padding:8px 10px;flex:none}
+.lv-card h3{margin:0;font-size:1.05rem}
+.lv-card p{margin:3px 0 0;font-size:.85rem}
+.lv-grid{flex:1;min-height:0;display:grid;gap:6px}
+.lv-p{border:1px solid var(--line);border-left:7px solid var(--line);border-radius:8px;background:var(--panel);padding:2px 8px;text-align:left;font:inherit;color:inherit;display:flex;flex-direction:column;justify-content:center;min-height:0;min-width:0;overflow:hidden;cursor:pointer}
+.lv-p.g{border-left-color:var(--good)}.lv-p.b{border-left-color:var(--evil)}.lv-p.q{border-left-color:var(--ink)}
+.lv-p.dead{opacity:.5}.lv-p.me{border-color:var(--brass);background:var(--sunk)}
+.lv-p b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:.95rem}
+.lv-p .s{font-size:.75rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lv-foot{flex:none;font-size:.8rem;color:var(--muted);text-align:center}
+.lv-pop{position:fixed;inset:0;background:#0008;display:flex;align-items:flex-end;justify-content:center;z-index:50}
+.lv-pop>div{background:var(--bg);width:100%;max-width:520px;border-radius:14px 14px 0 0;padding:14px 16px max(20px,env(safe-area-inset-bottom,0px));box-sizing:border-box}
+.lv-pop .guess{display:flex;width:100%}.lv-pop .guess button{flex:1;padding:12px;font-size:1rem}
+.lv-notes{flex:1;min-height:0;overflow-y:auto}
+.lv-legend{display:flex;gap:10px;justify-content:center;font-size:.75rem;color:var(--muted);flex:none}
+.lv-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:3px;vertical-align:-1px}
 </style>
 
 <div class="wrap">
@@ -2688,6 +2711,7 @@ function renderTabs(){
   document.getElementById("tabs").innerHTML = TABS.map(([k,l]) => `<button role="tab" aria-selected="${k === tab}" data-tab="${k}">${l}</button>`).join("");
 }
 function render(){
+  if (MODE !== "spieler") document.body.classList.remove("live");
   if (PCSTART) return renderPcStart();
   if (JOIN) return renderJoin();
   if (MODE === "sound") return renderSound();
@@ -3189,10 +3213,14 @@ function renderPlayer(){
   if (!Q) Q = qGet() || qblank();
   document.getElementById("modeBtn").hidden = isLocked();
   const live = inRoom(), tabs = live ? LTABS : PTABS;
+  document.body.classList.toggle("live", live);
   if (live && !LTABS.some(x => x[0] === ptab)) ptab = "pgame";
-  document.getElementById("tabs").innerHTML = tabs.map(([k,l]) => `<button role="tab" aria-selected="${k === ptab}" data-ptab="${k}">${l}</button>`).join("");
+  if (live && ptab === "pnotes") Q.me.seen = Q.me.log.filter(x => x.auto).length;
+  const neu = live ? Math.max(0, Q.me.log.filter(x => x.auto).length - (Q.me.seen || 0)) : 0;
+  document.getElementById("tabs").innerHTML = tabs.map(([k,l]) => `<button role="tab" aria-selected="${k === ptab}" data-ptab="${k}">${l}${k === "pnotes" && neu ? ` <b style="color:var(--brass)">(${neu} neu)</b>` : ""}</button>`).join("");
   const living = Q.players.filter(p => p.alive).length;
   document.getElementById("phaseLbl").textContent = `Spieler · ${Q.script === "alle" ? "Alle Rollen" : scriptOf(Q.script).name}` + (Q.players.length ? ` · ${living} von ${Q.players.length} leben` : "");
+  if (live) document.getElementById("phaseLbl").textContent = Q.script === "alle" ? "Alle Rollen" : scriptOf(Q.script).name;
   const v = document.getElementById("view");
   const d = window._share, sc = d && (d.s === "custom" ? CUSTOM : isUser(d.s) ? {name: d.n || "Eigenes Skript"} : scriptOf(d.s));
   const offer = d ? `<div class="card" id="shareOffer" style="border-color:var(--brass);margin-bottom:10px"><h3>Aufbau vom Spielleiter</h3><p class="small">${esc(sc.name)} · ${d.p.length} Spieler: ${d.p.map(esc).join(", ")}</p>${(d.x||[]).length ? `<p class="small">Tot: <b>${d.x.map(i => esc(d.p[i])).join(", ")}</b></p>` : ""}<div class="row" style="margin:6px 0"><label for="qWho"><b>Wer bist du?</b></label><select id="qWho"><option value="">bitte wählen</option>${d.p.map((n,i) => `<option value="${i}" ${Q.players[i] && Q.players[i].id === Q.meId && Q.players[i].name === n ? "selected" : ""}>${i+1} · ${esc(n)}</option>`).join("")}</select></div>
@@ -3242,24 +3270,44 @@ function pMe(){
 // Im Spielraum: eine Spielseite und Notizen
 const LTABS = [["pgame","Spiel"],["pnotes","Notizen"]];
 const inRoom = () => (netGuestCfg() || {}).kind === "spieler";
+let POP = null; // offener Spieler im Spielraum
 function pGame(){
-  const L = Q.live || {}, living = Q.players.filter(p => p.alive).length;
-  const rows = Q.players.map((p, i) => { const me = p.id === Q.meId, r = R[p.claim];
-    return `<tr class="${p.alive ? "" : "dead"}" ${me ? 'style="background:var(--sunk)"' : ""}><td style="white-space:nowrap">${i + 1} · <b>${esc(p.name)}</b>${me ? ' <span class="small" style="color:var(--brass)">du</span>' : ""}<div class="small muted">${p.alive ? "lebt" : p.ghost ? "👻 tot, Geisterstimme" : "tot, keine Stimme"}</div></td>
-    <td>${me ? `<span class="small">${r ? esc(r.name) : "–"}</span>` : qRoleSelect("qc_" + p.id, p.claim, `data-qclaim="${p.id}" style="max-width:120px;font-size:13px"`)}</td>
-    <td>${me ? "" : `<span class="guess">${[["g","gut"],["q","?"],["b","böse"]].map(([k,l]) => `<button class="${k}" aria-pressed="${p.guess === k}" data-pact="guess" data-g="${k}" data-qid="${p.id}">${l}</button>`).join("")}</span>`}</td></tr>`; }).join("");
-  return `${liveCard()}
-  <div class="tablewrap"><table class="small" style="width:100%"><tr><th>Spieler</th><th>behauptet</th><th>Verdacht</th></tr>${rows}</table></div>
-  <p class="small muted" style="margin-top:6px">${living} von ${Q.players.length} leben · für eine Hinrichtung nötig: <b>${Math.ceil(living / 2)}</b> Stimmen</p>`;
+  const L = Q.live || {}, cfg = netGuestCfg() || {}, n = Q.players.length, cols = n > 12 ? 3 : 2, rows = Math.max(1, Math.ceil(n / cols));
+  const living = Q.players.filter(p => p.alive).length, on = NET.on && !NET.closed;
+  const noms = (L.noms || []).slice(-2).map(x => `${esc(x.by)} → <b>${esc(x.on)}</b>: ${x.votes}${x.votes >= L.need ? " ✓" : ""}`).join(" · ");
+  const top = `<div class="lv-card"><div class="row" style="justify-content:space-between;align-items:center;flex-wrap:nowrap"><h3>${esc(L.ph || "Spielraum")}</h3><span class="small ${on ? "" : "bad"}">${on ? "● live" : "○ " + esc(NET.status || "getrennt")}</span></div>
+  ${L.win ? `<p><b>${esc(L.win)}</b></p>` : !L.seat ? `<p>Hallo ${esc(cfg.name || "")}! Der Spielleiter setzt dich gleich auf deinen Platz.</p>` : L.phase === "setup" ? `<p>Du sitzt auf Platz ${L.seat}. Deine Rolle kommt, wenn die erste Nacht beginnt.</p>` : phaseHint(L).replace('<p class="small muted" style="margin:4px 0">', "<p>")}
+  ${L.dawn && L.phase === "day" ? `<p>${esc(L.dawn)}</p>` : ""}${noms ? `<p>☝️ ${noms}</p>` : ""}</div>`;
+  const chips = Q.players.map((p, i) => { const me = p.id === Q.meId, c = R[p.claim];
+    const st = p.alive ? "" : p.ghost ? "👻 tot · " : "✝ tot · ";
+    return `<button class="lv-p ${me ? "me" : p.guess || ""} ${p.alive ? "" : "dead"}" data-pact="pop" data-qid="${p.id}"><b>${i + 1} · ${esc(p.name)}${me ? " (du)" : ""}</b><span class="s">${st}${me ? (L.role ? "deine Rolle" : "") : c ? "sagt: " + esc(c.name) : "antippen"}</span></button>`; }).join("");
+  return `${top}<div class="lv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr));grid-template-rows:repeat(${rows},minmax(0,1fr))">${chips || `<p class="muted">Noch keine Mitspieler.</p>`}</div>
+  <div class="lv-legend"><span><i style="background:var(--good)"></i>gut</span><span><i style="background:var(--ink)"></i>unsicher</span><span><i style="background:var(--evil)"></i>böse</span><span>= dein Verdacht</span></div>
+  <div class="lv-foot">${living} von ${n} leben · Hinrichtung ab <b>${Math.ceil(living / 2)}</b> Stimmen · Tippe auf einen Spieler</div>${popup()}`;
+}
+function popup(){
+  const p = POP && Q.players.find(x => x.id === POP); if (!p) return "";
+  const me = p.id === Q.meId, r = R[(Q.live || {}).role] || R[p.claim];
+  const body = me
+    ? `<h3 style="margin:0 0 8px">Deine Rolle</h3>${r ? `<div class="rl"><span class="disc ${["scherge","daemon"].includes(r.team) ? "evil" : ""}">${icon(r.id)}</span><div><b>${esc(r.name)}</b> <span class="pill t-${r.team}">${TEAMNAME[r.team]}</span><div class="small">${esc(r.ability)}</div></div></div>` : `<p class="small">Noch keine Rolle. Sie kommt, wenn die erste Nacht beginnt.</p>`}
+       <p class="small muted">Halte das Handy so, dass niemand mitliest.</p>
+       <div class="row" style="justify-content:space-between;margin-top:10px"><button class="btn sm" data-pact="leaveRoom">Raum verlassen</button><button class="btn pri" data-pact="popclose">Fertig</button></div>`
+    : `<h3 style="margin:0 0 8px">${esc(p.name)}${p.alive ? "" : " · tot"}</h3>
+       <div class="small" style="margin-bottom:4px">Was denkst du über ${esc(p.name)}?</div>
+       <span class="guess">${[["g","gut"],["q","weiß nicht"],["b","böse"]].map(([k,l]) => `<button class="${k}" aria-pressed="${p.guess === k}" data-pact="guess" data-g="${k}" data-qid="${p.id}">${l}</button>`).join("")}</span>
+       <div class="small" style="margin:10px 0 4px">Welche Rolle behauptet ${esc(p.name)}?</div>${qRoleSelect("qc_" + p.id, p.claim, `data-qclaim="${p.id}" style="width:100%"`)}
+       ${R[p.claim] ? `<div class="small muted" style="margin-top:3px">${esc(R[p.claim].ability)}</div>` : ""}
+       <div class="small" style="margin:10px 0 4px">Notiz</div><input type="text" data-qnote="${p.id}" value="${esc(p.note || "")}" placeholder="z. B. hat mich nominiert" style="width:100%" aria-label="Notiz ${esc(p.name)}">
+       <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn pri" data-pact="popclose">Fertig</button></div>`;
+  return `<div class="lv-pop" data-pact="popclose"><div data-pact="noop" role="dialog" aria-label="${esc(p.name)}">${body}</div></div>`;
 }
 function pNotesLive(){
-  const lg = Q.me.log.map((e, i) => `<div class="row" style="margin:4px 0;flex-wrap:nowrap"><input type="text" data-qlogw="${i}" value="${esc(e.when)}" style="width:104px;flex:none" aria-label="Wann">${e.auto ? '<span title="vom Spielleiter">📜</span>' : ""}<input type="text" data-qlogt="${i}" value="${esc(e.text)}" style="flex:1;min-width:0" aria-label="Notiz"><button class="btn sm bad" data-pact="logdel" data-qid="${i}" aria-label="Notiz löschen">×</button></div>`).reverse().join("");
-  const pn = Q.players.filter(p => p.id !== Q.meId).map(p => `<div class="row" style="margin:3px 0;flex-wrap:nowrap"><span class="small" style="width:80px;flex:none;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</span><input type="text" data-qnote="${p.id}" value="${esc(p.note || "")}" placeholder="Notiz" style="flex:1;min-width:0" aria-label="Notiz ${esc(p.name)}"></div>`).join("");
-  return `<h2>Meine Notizen</h2><p class="small muted" style="margin:0 0 4px">📜 = vom Spielleiter, kommt automatisch. Alles lässt sich ändern oder löschen.</p>
-  <div class="row" style="flex-wrap:nowrap"><input type="text" id="qWhen" placeholder="${esc((Q.live || {}).ph || "Wann")}" style="width:104px;flex:none" aria-label="Wann"><input type="text" id="qLog" placeholder="Neue Notiz" style="flex:1;min-width:0" aria-label="Neue Notiz"><button class="btn pri" data-pact="log">+</button></div>
-  ${lg || `<p class="muted small">Noch nichts notiert.</p>`}
-  <h2>Zu den Mitspielern</h2>${pn || `<p class="muted small">Noch keine Mitspieler.</p>`}
-  <h2>Gedanken</h2><textarea data-qnotes="1" style="min-height:120px" placeholder="Theorien, Bündnisse, Widersprüche …">${esc(Q.notes)}</textarea>`;
+  const all = Q.me.log.map((e, i) => [e, i]).reverse();
+  const pn = Q.players.filter(p => p.note && p.id !== Q.meId).map(p => `<div class="row" style="margin:4px 0;flex-wrap:nowrap"><span class="small" style="width:104px;flex:none;overflow:hidden;text-overflow:ellipsis">👤 ${esc(p.name)}</span><input type="text" data-qnote="${p.id}" value="${esc(p.note)}" style="flex:1;min-width:0" aria-label="Notiz ${esc(p.name)}"></div>`).join("");
+  const lg = all.map(([e, i]) => `<div class="row" style="margin:4px 0;flex-wrap:nowrap"><input type="text" data-qlogw="${i}" value="${esc(e.when)}" style="width:104px;flex:none" aria-label="Wann">${e.auto ? '<span title="vom Spielleiter">📜</span>' : ""}<input type="text" data-qlogt="${i}" value="${esc(e.text)}" style="flex:1;min-width:0" aria-label="Notiz"><button class="btn sm bad" data-pact="logdel" data-qid="${i}" aria-label="Notiz löschen">×</button></div>`).join("");
+  return `<div class="lv-card" style="border-color:var(--line)"><p style="margin:0">📜 = kommt automatisch vom Spielleiter. Tippe in einen Eintrag, um ihn zu ändern, × löscht ihn. Notizen zu einem Mitspieler schreibst du unter <b>Spiel</b> beim Spieler.</p></div>
+  <div class="row" style="flex-wrap:nowrap;flex:none"><input type="text" id="qWhen" placeholder="${esc((Q.live || {}).ph || "Wann")}" style="width:104px;flex:none" aria-label="Wann"><input type="text" id="qLog" placeholder="Neue Notiz schreiben" style="flex:1;min-width:0" aria-label="Neue Notiz"><button class="btn pri" data-pact="log" aria-label="Notiz speichern">+</button></div>
+  <div class="lv-notes">${lg || pn ? lg + pn : `<p class="muted small">Noch nichts notiert.</p>`}</div>`;
 }
 // Was der Spielleiter schickt, landet automatisch in den Notizen. Selbst geänderte oder gelöschte Einträge bleiben so.
 function noteAuto(key, when, text){
@@ -3289,6 +3337,9 @@ document.addEventListener("click", e => {
     case "del": Q.players = Q.players.filter(x => x !== p); break;
     case "script": Q.script = t.dataset.sid; break;
     case "log": { const v = document.getElementById("qLog").value.trim(); if (!v) return; Q.me.log.push({when: document.getElementById("qWhen").value.trim() || (Q.live || {}).ph || new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}), text:v, sure:true}); break; }
+    case "pop": POP = t.dataset.qid; return renderPlayer();
+    case "popclose": POP = null; return renderPlayer();
+    case "noop": return;
     case "logdel": { const i = +t.dataset.qid, x = Q.me.log[i]; if (!x) return; if (x.key) (Q.me.gone = Q.me.gone || []).push(x.key); Q.me.log.splice(i, 1); break; }
     case "takeShare": { const d = window._share; if (!d) return; const old = Q.players; const who = document.getElementById("qWho")?.value;
       if (who === "" || who === undefined){ document.getElementById("qWho")?.focus(); return; }
