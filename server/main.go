@@ -95,6 +95,9 @@ func (h *hub) guestList() []byte {
 	}
 	l := []g{}
 	for _, x := range h.guests {
+		if x.Kind == "spieler" && (h.code == "" || x.Code != h.code) {
+			continue // Handys aus einem anderen (alten) Raum gehören nicht in diese Liste
+		}
 		l = append(l, g{x.Tok, x.Name, x.Kind, len(x.conns) > 0 || x.Bot, x.Bot})
 	}
 	sort.Slice(l, func(i, j int) bool { return l[i].Name < l[j].Name })
