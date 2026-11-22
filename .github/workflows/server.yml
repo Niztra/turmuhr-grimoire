@@ -1,0 +1,35 @@
+name: Turmuhr-Server bauen
+
+on:
+  push:
+    branches: [main]
+    paths: ["index.html", "audio/**", "server/**", ".github/workflows/server.yml"]
+  pull_request:
+    paths: ["index.html", "audio/**", "server/**", ".github/workflows/server.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - name: Bauen (Linux + Windows)
+        run: VERSION="$(date +%Y-%m-%d)-${GITHUB_SHA::7}" GO=go ./server/build.sh
+      - name: Als Artefakt ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: turmuhr-server
+          path: server/dist/*
+      - name: Download-Release "server" aktualisieren
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view server >/dev/null 2>&1 || gh release create server --title "Turmuhr-Server" --notes "Server-Programm für Spieler-Handys und Soundanlage. Ohne Installation: Windows .exe doppelklicken, unter Linux ausführbar machen und starten. Wird bei jeder App-Änderung neu gebaut."
+          gh release upload server server/dist/turmuhr-server-linux server/dist/turmuhr-server-windows.exe --clobber
