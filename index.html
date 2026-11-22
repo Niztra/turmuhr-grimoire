@@ -3188,13 +3188,16 @@ const PTABS = [["ptable","Mitspieler"],["pscript","Skript"],["pme","Ich"],["pnot
 function renderPlayer(){
   if (!Q) Q = qGet() || qblank();
   document.getElementById("modeBtn").hidden = isLocked();
-  document.getElementById("tabs").innerHTML = PTABS.map(([k,l]) => `<button role="tab" aria-selected="${k === ptab}" data-ptab="${k}">${l}</button>`).join("");
+  const live = inRoom(), tabs = live ? LTABS : PTABS;
+  if (live && !LTABS.some(x => x[0] === ptab)) ptab = "pgame";
+  document.getElementById("tabs").innerHTML = tabs.map(([k,l]) => `<button role="tab" aria-selected="${k === ptab}" data-ptab="${k}">${l}</button>`).join("");
   const living = Q.players.filter(p => p.alive).length;
   document.getElementById("phaseLbl").textContent = `Spieler · ${Q.script === "alle" ? "Alle Rollen" : scriptOf(Q.script).name}` + (Q.players.length ? ` · ${living} von ${Q.players.length} leben` : "");
   const v = document.getElementById("view");
   const d = window._share, sc = d && (d.s === "custom" ? CUSTOM : isUser(d.s) ? {name: d.n || "Eigenes Skript"} : scriptOf(d.s));
   const offer = d ? `<div class="card" id="shareOffer" style="border-color:var(--brass);margin-bottom:10px"><h3>Aufbau vom Spielleiter</h3><p class="small">${esc(sc.name)} · ${d.p.length} Spieler: ${d.p.map(esc).join(", ")}</p>${(d.x||[]).length ? `<p class="small">Tot: <b>${d.x.map(i => esc(d.p[i])).join(", ")}</b></p>` : ""}<div class="row" style="margin:6px 0"><label for="qWho"><b>Wer bist du?</b></label><select id="qWho"><option value="">bitte wählen</option>${d.p.map((n,i) => `<option value="${i}" ${Q.players[i] && Q.players[i].id === Q.meId && Q.players[i].name === n ? "selected" : ""}>${i+1} · ${esc(n)}</option>`).join("")}</select></div>
   <p class="small muted">Deine Notizen zu Spielern mit gleichem Namen bleiben erhalten. Danach ist die Spielleiter-Ansicht auf diesem Gerät gesperrt.</p>${S.players.length && !isLocked() ? `<p class="hint bad small">Auf diesem Gerät ist ein Spielleiter-Spiel gespeichert. Bist du der Spielleiter, tippe auf „Ignorieren“.</p>` : ""}<div class="row"><button class="btn pri" data-pact="takeShare">Übernehmen</button><button class="btn" data-pact="dropShare">Ignorieren</button></div></div>` : "";
+  if (live){ v.innerHTML = ptab === "pnotes" ? pNotesLive() : pGame(); hideTip(); tipify(v); return; }
   v.innerHTML = liveCard() + offer + ({ptable:pTable, pscript:pScript, pme:pMe, pnotes:pNotes, pwiki:() => vWiki(["basis","spieler"])}[ptab])();
   hideTip(); tipify(v);
 }
@@ -3236,6 +3239,36 @@ function pMe(){
     ${r ? `<div class="rl notip" style="margin-top:10px"><span class="disc ${["scherge","daemon"].includes(r.team) ? "evil" : ""}">${icon(r.id)}</span><div><b>${esc(r.name)}</b> <span class="pill t-${r.team}">${TEAMNAME[r.team]}</span><div class="small">${esc(r.ability)}</div></div></div>` : `<p class="small muted">Nur für dich. Wähle die Rolle, die dir der Spielleiter gezeigt hat.</p>`}</div>
   <h2>Meine Infos</h2><div class="row"><input type="text" id="qWhen" placeholder="z. B. Nacht 1" style="width:120px" aria-label="Wann"><input type="text" id="qLog" placeholder="Was hast du erfahren?" style="flex:1;min-width:180px" aria-label="Info"><button class="btn" data-pact="log">Eintragen</button></div>${lg || `<p class="muted small">Noch nichts notiert.</p>`}`;
 }
+// Im Spielraum: eine Spielseite und Notizen
+const LTABS = [["pgame","Spiel"],["pnotes","Notizen"]];
+const inRoom = () => (netGuestCfg() || {}).kind === "spieler";
+function pGame(){
+  const L = Q.live || {}, living = Q.players.filter(p => p.alive).length;
+  const rows = Q.players.map((p, i) => { const me = p.id === Q.meId, r = R[p.claim];
+    return `<tr class="${p.alive ? "" : "dead"}" ${me ? 'style="background:var(--sunk)"' : ""}><td style="white-space:nowrap">${i + 1} · <b>${esc(p.name)}</b>${me ? ' <span class="small" style="color:var(--brass)">du</span>' : ""}<div class="small muted">${p.alive ? "lebt" : p.ghost ? "👻 tot, Geisterstimme" : "tot, keine Stimme"}</div></td>
+    <td>${me ? `<span class="small">${r ? esc(r.name) : "–"}</span>` : qRoleSelect("qc_" + p.id, p.claim, `data-qclaim="${p.id}" style="max-width:120px;font-size:13px"`)}</td>
+    <td>${me ? "" : `<span class="guess">${[["g","gut"],["q","?"],["b","böse"]].map(([k,l]) => `<button class="${k}" aria-pressed="${p.guess === k}" data-pact="guess" data-g="${k}" data-qid="${p.id}">${l}</button>`).join("")}</span>`}</td></tr>`; }).join("");
+  return `${liveCard()}
+  <div class="tablewrap"><table class="small" style="width:100%"><tr><th>Spieler</th><th>behauptet</th><th>Verdacht</th></tr>${rows}</table></div>
+  <p class="small muted" style="margin-top:6px">${living} von ${Q.players.length} leben · für eine Hinrichtung nötig: <b>${Math.ceil(living / 2)}</b> Stimmen</p>`;
+}
+function pNotesLive(){
+  const lg = Q.me.log.map((e, i) => `<div class="row" style="margin:4px 0;flex-wrap:nowrap"><input type="text" data-qlogw="${i}" value="${esc(e.when)}" style="width:104px;flex:none" aria-label="Wann">${e.auto ? '<span title="vom Spielleiter">📜</span>' : ""}<input type="text" data-qlogt="${i}" value="${esc(e.text)}" style="flex:1;min-width:0" aria-label="Notiz"><button class="btn sm bad" data-pact="logdel" data-qid="${i}" aria-label="Notiz löschen">×</button></div>`).reverse().join("");
+  const pn = Q.players.filter(p => p.id !== Q.meId).map(p => `<div class="row" style="margin:3px 0;flex-wrap:nowrap"><span class="small" style="width:80px;flex:none;overflow:hidden;text-overflow:ellipsis">${esc(p.name)}</span><input type="text" data-qnote="${p.id}" value="${esc(p.note || "")}" placeholder="Notiz" style="flex:1;min-width:0" aria-label="Notiz ${esc(p.name)}"></div>`).join("");
+  return `<h2>Meine Notizen</h2><p class="small muted" style="margin:0 0 4px">📜 = vom Spielleiter, kommt automatisch. Alles lässt sich ändern oder löschen.</p>
+  <div class="row" style="flex-wrap:nowrap"><input type="text" id="qWhen" placeholder="${esc((Q.live || {}).ph || "Wann")}" style="width:104px;flex:none" aria-label="Wann"><input type="text" id="qLog" placeholder="Neue Notiz" style="flex:1;min-width:0" aria-label="Neue Notiz"><button class="btn pri" data-pact="log">+</button></div>
+  ${lg || `<p class="muted small">Noch nichts notiert.</p>`}
+  <h2>Zu den Mitspielern</h2>${pn || `<p class="muted small">Noch keine Mitspieler.</p>`}
+  <h2>Gedanken</h2><textarea data-qnotes="1" style="min-height:120px" placeholder="Theorien, Bündnisse, Widersprüche …">${esc(Q.notes)}</textarea>`;
+}
+// Was der Spielleiter schickt, landet automatisch in den Notizen. Selbst geänderte oder gelöschte Einträge bleiben so.
+function noteAuto(key, when, text){
+  const gone = Q.me.gone = Q.me.gone || [];
+  if (!text || gone.includes(key)) return;
+  const e = Q.me.log.find(x => x.key === key);
+  if (!e) Q.me.log.push({key, when, text, sure:true, auto:true});
+  else if (!e.ed && e.text !== text) e.text = text;
+}
 function pNotes(){
   return `<h2>Notizen</h2><textarea data-qnotes="1" style="min-height:220px" placeholder="Theorien, Bündnisse, Widersprüche …">${esc(Q.notes)}</textarea>
   <h2>Neue Runde</h2><div class="row"><button class="btn bad" data-pact="resetAsk">Alles leeren</button><span id="qReset"></span></div>`;
@@ -3255,7 +3288,8 @@ document.addEventListener("click", e => {
     case "up": { const i = Q.players.indexOf(p); if (i > 0) [Q.players[i-1], Q.players[i]] = [Q.players[i], Q.players[i-1]]; break; }
     case "del": Q.players = Q.players.filter(x => x !== p); break;
     case "script": Q.script = t.dataset.sid; break;
-    case "log": { const v = document.getElementById("qLog").value.trim(); if (!v) return; Q.me.log.push({when: document.getElementById("qWhen").value.trim() || new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}), text:v, sure:true}); break; }
+    case "log": { const v = document.getElementById("qLog").value.trim(); if (!v) return; Q.me.log.push({when: document.getElementById("qWhen").value.trim() || (Q.live || {}).ph || new Date().toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"}), text:v, sure:true}); break; }
+    case "logdel": { const i = +t.dataset.qid, x = Q.me.log[i]; if (!x) return; if (x.key) (Q.me.gone = Q.me.gone || []).push(x.key); Q.me.log.splice(i, 1); break; }
     case "takeShare": { const d = window._share; if (!d) return; const old = Q.players; const who = document.getElementById("qWho")?.value;
       if (who === "" || who === undefined){ document.getElementById("qWho")?.focus(); return; }
       Q.script = d.s; Q.custom = d.c || []; Q.sdef = isUser(d.s) ? {id:d.s, name:d.n || "Eigenes Skript", en:"vom Spielleiter", stufe:3, min:5, max:20, desc:"Eigenes Skript des Spielleiters.", roles:d.c || []} : null;
@@ -3289,7 +3323,9 @@ document.addEventListener("input", e => {
   const d = e.target.dataset;
   if (d.qnote){ Q.players.find(x => x.id === d.qnote).note = e.target.value; qSave(); }
   if (d.qnotes){ Q.notes = e.target.value; qSave(); }
+  if (d.qlogt !== undefined || d.qlogw !== undefined){ const x = Q.me.log[+(d.qlogt ?? d.qlogw)]; if (!x) return; if (d.qlogt !== undefined) x.text = e.target.value; else x.when = e.target.value; x.ed = true; qSave(); }
 });
+document.addEventListener("keydown", e => { if (MODE === "spieler" && e.key === "Enter" && e.target.id === "qLog"){ e.preventDefault(); document.querySelector('[data-pact="log"]').click(); } });
 document.addEventListener("keydown", e => { if (MODE === "spieler" && e.key === "Enter" && e.target.id === "qNew"){ e.preventDefault(); document.querySelector('[data-pact="add"]').click(); } });
 
 
@@ -3796,7 +3832,8 @@ function roomClose(){ if (S.room && S.room.key && SRV) api("close", {key:S.room.
 function netStop(){ clearTimeout(NET.timer); try{ NET.es && NET.es.close(); }catch(_){} NET.es = null; NET.host = NET.on = NET.closed = false; NET.guests = []; wakeOff(); }
 async function wakeOn(){ try{ if (!NET.wake && navigator.wakeLock && !document.hidden) NET.wake = await navigator.wakeLock.request("screen"); NET.wake && NET.wake.addEventListener("release", () => NET.wake = null); }catch(_){} }
 function wakeOff(){ try{ NET.wake && NET.wake.release(); }catch(_){} NET.wake = null; }
-function netRefresh(){ if (MODE === "spielleiter" && (tab === "sound" || tab === "setup")) { if (!document.querySelector("#view input:focus, #view textarea:focus, #view select:focus")) render(); } else if (MODE === "spieler" || MODE === "sound" || PCSTART) render(); }
+function netRefresh(){ if (MODE === "spielleiter" && (tab === "sound" || tab === "setup")) { if (!document.querySelector("#view input:focus, #view textarea:focus, #view select:focus")) render(); } else if (MODE === "spieler" && document.querySelector("#view input:focus, #view textarea:focus, #view select:focus")) NET.dirty = true; else if (MODE === "spieler" || MODE === "sound" || PCSTART) render(); }
+document.addEventListener("focusout", () => setTimeout(() => { if (NET.dirty && MODE === "spieler" && !document.querySelector("#view input:focus, #view textarea:focus, #view select:focus")){ NET.dirty = false; render(); } }, 200));
 
 /* --- Spielleiter: schickt den Stand an den Server --- */
 async function netHost(){
@@ -3969,6 +4006,9 @@ function guestData(m){
   if (m.k === "me"){
     const L = Q.live = Q.live || {}; const fresh = (m.msgs || []).length > (L.msgs || []).length || (m.role && m.role !== L.role) || JSON.stringify(m.infos || []) !== JSON.stringify(L.infos || []);
     L.seat = m.seat; L.role = m.role; L.msgs = m.msgs || []; L.infos = m.infos || [];
+    if (m.role && R[m.role]) noteAuto("rolle", "Rolle", "Ich bin " + R[m.role].name + ": " + R[m.role].ability);
+    L.infos.forEach(x => noteAuto("i:" + x.when, x.when, x.text));
+    L.msgs.forEach((x, i) => noteAuto("m:" + i, x.when, x.text));
     const me = m.seat ? Q.players[m.seat - 1] : null;
     if (me){ Q.meId = me.id; if (m.role && R[m.role]){ Q.me.role = m.role; me.claim = m.role; me.claimSure = true; } }
     if (fresh && navigator.vibrate) try{ navigator.vibrate(200); }catch(_){}
@@ -3991,9 +4031,8 @@ function liveCard(){
   ${L.phase === "day" ? `<p class="small muted" style="margin:4px 0">Nötig für eine Hinrichtung: ${L.need} Stimmen</p>${noms || `<div class="small muted">Noch keine Nominierung heute.</div>`}` : ""}
   ${!L.seat ? `<p class="small muted">Angemeldet als <b>${esc(cfg.name || "?")}</b>. Der Spielleiter ordnet dich gleich deinem Platz zu.</p>` : L.phase === "setup" ? `<p class="small muted">Du sitzt auf Platz ${L.seat}. Deine Rolle bekommst du, wenn die erste Nacht beginnt.</p>` : ""}
   ${phaseHint(L)}
-  ${(L.infos || []).length ? `<div style="margin-top:6px"><b class="small">Deine Infos</b>${L.infos.slice().reverse().map(x => `<div class="entry small"><b>${esc(x.when)}</b> · ${esc(x.text)}</div>`).join("")}</div>` : ""}
+  ${(L.infos || []).length + (L.msgs || []).length ? `<p class="small" style="margin:6px 0 0">📜 ${(L.infos || []).length + (L.msgs || []).length} ${(L.infos || []).length + (L.msgs || []).length === 1 ? "Eintrag vom Spielleiter steht" : "Einträge vom Spielleiter stehen"} in deinen <button class="btn sm" data-ptab="pnotes">Notizen</button></p>` : ""}
   ${r ? `<details style="margin-top:6px"><summary>Meine Rolle anzeigen</summary><div class="rl" style="margin-top:6px"><span class="disc ${["scherge","daemon"].includes(r.team) ? "evil" : ""}">${icon(r.id)}</span><div><b>${esc(r.name)}</b> <span class="pill t-${r.team}">${TEAMNAME[r.team]}</span><div class="small">${esc(r.ability)}</div></div></div></details>` : ""}
-  ${(L.msgs || []).length ? `<details style="margin-top:6px" ${ptab === "pme" ? "open" : ""}><summary>Vom Spielleiter (${L.msgs.length})</summary>${L.msgs.slice().reverse().map(x => `<div class="entry small"><b>${esc(x.when)}</b> · ${esc(x.text)}</div>`).join("")}</details>` : ""}
   <div class="row" style="margin-top:6px;justify-content:flex-end"><button class="btn sm" data-pact="leaveRoom">Raum verlassen</button></div></div>`;
 }
 // Beitritt über #raum-CODE, Startseite am Server-PC über #start
