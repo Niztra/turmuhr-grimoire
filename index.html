@@ -2451,7 +2451,7 @@ const AUTO = new Set(["giftmischer","moench","imp","scharlachrote_frau","wahrsag
 
 let S = null;          // Spielzustand
 let tab = "grim";
-const blank = () => ({v:1, script:"tb", onlyScript:true, custom:[], n:0, phase:"setup", players:[], bluffs:["","",""], choices:{}, info:{}, talked:{}, executed:{}, noms:[], log:[], notes:"", win:"", dawn:""});
+const blank = () => ({v:1, script:"tb", onlyScript:true, custom:[], n:0, phase:"setup", players:[], bluffs:["","",""], choices:{}, info:{}, rel:{}, talk:"tag", talked:{}, executed:{}, noms:[], log:[], notes:"", win:"", dawn:""});
 
 /* ---------- Speichern: db (privat pro Spielleiter), sonst Browser ---------- */
 let dbDoc = null, saveTimer = null;
@@ -2611,6 +2611,9 @@ const WIKI = {
       "Danach Nominierungen im Tab <b>Abstimmung</b> mitzählen. Die App rechnet die nötige Mehrheit aus."]],
     ["Die Nacht", ["Im Tab <b>Nacht</b> stehen die Wahlen aus der Sprechstunde. Die App löst Mönch, Imp und Ersatzopfer auf.",
       "Alles, was du nicht sicher weißt, im Zweifel so entscheiden, dass das Spiel spannend bleibt."]],
+    ["Spielmodus", ["Beim Aufbau wählst du, wann die Einzelgespräche stattfinden.",
+      "<b>Hausregel (Sprechstunde):</b> Jeder kommt am Tag kurz allein zu dir, sagt seine Wahl für die Nacht und bekommt seine Info. Die Nacht ist Pause.",
+      "<b>Normal:</b> Nachts sind alle Augen zu. Du weckst die Spieler unter <b>Gespräche</b> (Nachtrunde), trägst ihre Wahlen ein, löst unter <b>Nacht</b> auf und gibst die Infos. Am Tag wird nur offen geredet."]],
     ["Gute Leitung", ["Du bist neutral, aber du darfst das Spiel ausbalancieren: Läuft es für eine Seite zu leicht, gib der anderen über Gift, Trunkenbold oder Einsiedler etwas mehr Chancen.",
       "Erkläre Regeln jederzeit offen. Verrate aber nie, wer welche Rolle hat.",
       "Halte das Tempo hoch: Diskussion etwa 10 Minuten pro Tag, später kürzer.",
@@ -2620,7 +2623,7 @@ const WIKI = {
 const ERKL = [
   ["Vorbereitung (bevor die Gäste kommen)", [
     ["Server", "Turmuhr-Server: Das Programm (Aufbau → Spieler-Handys, Download für Windows oder Linux) auf dem PC mit den Lautsprechern starten, ohne Installation. Der PC zeigt einen QR-Code: Mit deinem Handy scannen und dort als Spielleiter weitermachen. PC und alle Handys müssen im selben WLAN sein. Blockt ein Gäste-WLAN Verbindungen zwischen Geräten, einen Hotspot aufmachen und alle damit verbinden."],
-    ["Handys", "Spielraum: Beim neuen Spiel öffnet sich ein Raum auf dem Server (Aufbau → Spieler-Handys). Die Spieler scannen den QR-Code, geben ihren Namen ein, und du ordnest jedes Handy seinem Platz zu. Erst dann schickst du Rollen oder private Nachrichten (im Spielerblatt). Alle sehen nur Skript, Mitspieler, Phase, Ansage und Nominierungen. Lass die App offen."],
+    ["Handys", "Spielraum: Im Aufbau öffnet sich ein Raum auf dem Server. Schick den Einladungslink in die Gruppe oder zeig den QR-Code. Wer beitritt, steht automatisch in der Spielerliste. Du setzt jeden auf seinen Platz. Mit der ersten Nacht bekommt jedes Handy seine eigene Rolle, später auf Wunsch (📱) seine Infos. Alle sehen sonst nur Skript, Mitspieler, Phase, Ansage und Nominierungen. Lass die App offen."],
     ["Sound", "Soundanlage koppeln: Auf der Startseite des Server-PCs „Dieser PC ist die Soundanlage“ wählen. Dein Handy steuert dann über Sound alles am PC, Internet braucht es dafür nicht. Zum Test am PC „Ton testen“ drücken."],
     ["Anleitung", "Tippe unten auf „Testaufbau starten“. Die App zeigt dann ein ausgedachtes Übungsspiel mit 8 Namen und Blutmond-Rollen. So siehst du nichts vom echten Spiel und verrätst keine echten Rollen. Dein echtes Spiel bleibt gespeichert."]]],
   ["1. Die Geschichte erzählen", [
@@ -2731,7 +2734,7 @@ function vSetup(){
   const range = n && (n < sc.min || n > sc.max) ? `<div class="hint bad">${esc(sc.name)} ist für ${sc.min} bis ${sc.max} Spieler gedacht, ihr seid ${n}.</div>` : "";
   const distTxt = d ? `<div class="hint">Verteilung für ${n}: ${d[0]} Dorfbewohner · ${d[1]} Außenseiter · ${d[2]} Schergen · ${d[3]} Dämon (Baron, Pate, Fang Gu und Vigormortis ändern die Außenseiter). <button class="btn sm" data-act="draw">Zufällig aus dem Skript ziehen</button></div>` : "";
   const sugg = (S.script || "tb") === "tb" && su ? `<div class="hint">Empfehlung für ${n}: <b>${su.ev.map(roleName).join(", ")}</b> · ${su.out.map(roleName).join(", ")} · ${su.tf.map(roleName).join(", ")}. Trunkenbold hält sich für <b>${roleName(su.drunk)}</b>. <button class="btn sm" data-act="applySetup">Übernehmen</button> <button class="btn sm" data-act="shuffle">Rollen zufällig auf Plätze mischen</button></div>` : "";
-  return `${storyCard()}${scriptPicker()}
+  return `${guideCard()}${storyCard()}${scriptPicker()}
   <label class="chk" style="margin-top:8px"><input type="checkbox" data-only="1" ${S.onlyScript !== false ? "checked" : ""}> Nur Rollen aus diesem Skript zur Auswahl anzeigen</label>
   ${customPick}
   <h2>Spieler in Sitzreihenfolge</h2>
@@ -2748,7 +2751,7 @@ function vSetup(){
   <button class="btn sm" data-act="autoBluff">Automatisch wählen</button></div>
   <div class="row" style="margin-top:8px"><span>Roter Hering (guter Spieler):</span>${playerSelect("hering", (S.players.find(p => has(p,"hering"))||{}).id)}</div>
   <h2>Los geht's</h2>
-  <div class="row"><button class="btn pri" data-act="start" ${S.phase === "setup" ? "" : "disabled"}>Erste Nacht beginnen</button><span class="small muted">Danach findest du alles unter Gespräche.</span></div>`;
+  <div class="row"><button class="btn pri" data-act="start" ${S.phase === "setup" ? "" : "disabled"}>Erste Nacht beginnen</button><span class="small muted">${S.room ? "Jetzt bekommt jedes zugeordnete Handy seine eigene Rolle. " : ""}Danach findest du alles unter Gespräche.</span></div>`;
 }
 
 /* Infos der ersten Nacht berechnen (Vorschläge) */
@@ -2776,14 +2779,16 @@ function suggest(p, n){
 function vTalk(){
   if (S.phase === "setup") return `<div class="card"><p>Erst den Aufbau abschließen und die erste Nacht beginnen.</p></div>`;
   const first = S.phase === "night" && S.n === 1;
-  const day = S.n, key = first ? 0 : day;    // Wahl am Tag n gilt für Nacht n+1; erste Nacht = 0
+  const nightTalk = S.talk === "nacht";
+  if (nightTalk && S.phase === "day") return `<div class="card"><p><b>Normaler Modus:</b> Am Tag gibt es keine Einzelgespräche, alle reden offen. Wahlen und Infos laufen nachts, wenn du die Spieler weckst. Weiter mit <b>Abstimmung</b>, dann <b>Nacht</b>.</p><button class="btn pri" data-tab="vote">Zur Abstimmung</button></div>`;
+  const day = nightTalk && S.phase === "night" ? S.n - 1 : S.n, key = first ? 0 : day;    // Wahl am Tag n gilt für Nacht n+1; erste Nacht = 0
   let list;
   if (first) list = S.players;
   else { const start = (day - 1) % S.players.length; list = seatOrder(start).filter(p => p.alive || (actsAs(p) === "rabenhueter" && p.diedNight === day)); }
-  if (S.phase === "night" && !first) return `<div class="card"><p>Es ist Nacht. Die Gespräche finden morgen statt. Löse die Nacht unter <b>Nacht</b> auf.</p></div>`;
+  if (S.phase === "night" && !first && !nightTalk) return `<div class="card"><p>Es ist Nacht. Die Gespräche finden morgen statt. Löse die Nacht unter <b>Nacht</b> auf.</p></div>`;
   const ch = S.choices[key] = S.choices[key] || {};
   const done = S.talked[key] = S.talked[key] || {};
-  const info = S.info[day] || {};
+  const infoN = nightTalk ? S.n : day, info = S.info[infoN] || {};
   const cards = list.map(p => {
     const picks = picksFor(p, first);
     const rk = actsAs(p) === "rabenhueter" && !p.alive;
@@ -2792,7 +2797,7 @@ function vTalk(){
     const rkInfo = rk && c.a ? `<div class="hint">Zeige <b>${roleName(P(c.a).role)}</b>${impaired(p) ? " (oder falsch, er war beeinträchtigt)" : ""}</div>` : "";
     return `<div class="card talk ${done[p.id] ? "done" : ""}">
       <div class="row" style="justify-content:space-between"><h3>${p.seat} · ${esc(p.name)}</h3><span class="pill t-${team(p)}">${esc(roleLabel(p))}</span></div>
-      ${first ? suggest(p, 1) : (info[p.id] ? `<div class="hint">Info aus der Nacht: ${info[p.id]}</div>` : `<div class="small muted">Info: keine</div>`)}
+      ${first ? suggest(p, 1) + firstInfo(p) : nightTalk && !S._res ? `<div class="small muted">Erst die Wahl eintragen. Nach dem Auflösen (Tab Nacht) steht hier die Info.</div>` : (info[p.id] ? `<div class="hint">Info ${nightTalk ? "dieser" : "aus der"} Nacht: ${info[p.id]}</div><div class="row">${infoRel(p, infoN)}</div>` : `<div class="small muted">Info: keine</div>`)}
       ${!first && p.role === "imp" && p.newImp ? `<div class="hint bad">Sag ihm: „Du bist jetzt der Imp.“</div>` : ""}
       ${pk.map(x => `<div class="row small">${x.l}: ${(x.role ? roleSelect(`c_${key}_${p.id}_${x.k}`, c[x.k]) : playerSelect(`c_${key}_${p.id}_${x.k}`, c[x.k], {notSelf:x.notSelf, self:p.id})).replace("<select", `<select data-choice="${key}" data-pid="${p.id}" data-k="${x.k}"`)}</div>`).join("")}
       ${rkInfo}
@@ -2801,10 +2806,11 @@ function vTalk(){
       <div class="row" style="margin-top:6px;justify-content:space-between"><label class="chk"><input type="checkbox" data-done="${key}" data-pid="${p.id}" ${done[p.id] ? "checked" : ""}> erledigt</label><button class="btn sm" data-open="${p.id}">Spieler öffnen</button></div></div>`;
   }).join("");
   const left = list.filter(p => !done[p.id]).length;
-  return `<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><h2 style="margin:0">${first ? "Einzelgespräche der ersten Nacht" : "Sprechstunde Tag " + day}</h2><div class="small muted">${first ? "Sitzreihenfolge, je 2 bis 3 Minuten. Giftmischer-Ziel schon in der bösen Runde eintragen." : "Start bei Platz " + list[0]?.seat + ", jeder ca. 1 Minute. Noch " + left + " offen."}</div></div>
+  return `<div class="row" style="justify-content:space-between;margin-bottom:8px"><div><h2 style="margin:0">${first ? "Einzelgespräche der ersten Nacht" : nightTalk ? "Nachtrunde Nacht " + S.n : "Sprechstunde Tag " + day}</h2><div class="small muted">${first ? "Sitzreihenfolge, je 2 bis 3 Minuten. Giftmischer-Ziel schon in der bösen Runde eintragen." : (nightTalk ? "Weck reihum jeden kurz und trag seine Wahl ein. " : "") + "Start bei Platz " + list[0]?.seat + ", jeder ca. 1 Minute. Noch " + left + " offen."}</div></div>
   <div class="row"><span class="timer" id="tmr">${first ? "2:30" : "1:00"}</span><button class="btn" data-act="timer" data-sec="${first ? 150 : 60}">Timer</button></div></div>
   <div class="grid">${cards}</div>
-  ${first ? `<div class="row" style="margin-top:12px"><button class="btn pri" data-act="toDay1">Alle durch: Tag 1 beginnen</button></div>` : ""}`;
+  ${first ? `<div class="row" style="margin-top:12px"><button class="btn pri" data-act="toDay1">Alle durch: Tag 1 beginnen</button></div>` : ""}
+  ${nightTalk && !first ? `<div class="row" style="margin-top:12px"><button class="btn pri" data-tab="night">${S._res ? "Infos gegeben: zum Morgen" : "Alle gewählt: Nacht auflösen"}</button></div>` : ""}`;
 }
 
 function picksFor(p, first){
@@ -2895,21 +2901,21 @@ function infoFor(p){
 
 function vNight(){
   if (S.phase === "setup") return `<div class="card"><p>Noch kein Spiel gestartet.</p></div>`;
-  if (S.phase === "night" && S.n === 1) return `<div class="card"><h2>Erste Nacht</h2><ol><li>Alle Augen zu, Musik an.</li><li>Imp und Schergen antippen: Sie sehen sich. Imp bekommt die Bluffs: <b>${S.bluffs.filter(Boolean).map(roleName).join(", ") || "noch keine gewählt"}</b>.</li><li>Giftmischer zeigt sein Ziel: unter Gespräche beim Giftmischer eintragen.</li><li>Augen auf, dann Einzelgespräche im Nebenraum.</li></ol><button class="btn pri" data-tab="talk">Zu den Gesprächen</button></div>`;
+  if (S.phase === "night" && S.n === 1) return `<div class="card"><h2>Erste Nacht</h2><ol><li>Alle Augen zu, Musik an.</li><li>Imp und Schergen antippen: Sie sehen sich. Imp bekommt die Bluffs: <b>${S.bluffs.filter(Boolean).map(roleName).join(", ") || "noch keine gewählt"}</b>.</li><li>Giftmischer zeigt sein Ziel: unter Gespräche beim Giftmischer eintragen.</li>${S.room ? `<li>Die Rollen sind jetzt auf den zugeordneten Handys, jeder sieht nur seine eigene.</li>` : ""}<li>Augen auf, dann Einzelgespräche im Nebenraum.</li></ol><button class="btn pri" data-tab="talk">Zu den Gesprächen</button></div>`;
   if (S.phase === "day") return `<div class="card"><p>Es ist Tag ${S.n}. Wenn die Abstimmung vorbei ist: <button class="btn pri" data-act="toNight">Nacht beginnen</button></p></div>`;
   const r = S._res;
-  if (!r) return `<div class="card"><h2>Nacht ${S.n}</h2><p>Alle machen Pause. Prüfe, ob alle Wahlen von gestern eingetragen sind, dann auflösen.</p><button class="btn pri" data-act="resolve">Nacht auflösen</button></div>`;
+  if (!r) return `<div class="card"><h2>Nacht ${S.n}</h2>${S.talk === "nacht" ? `<p><b>Normaler Modus:</b> Weck die Spieler unter <b>Gespräche</b> (Nachtrunde) und trag ihre Wahlen ein. Dann auflösen und die Infos geben.</p><div class="row"><button class="btn" data-tab="talk">Zur Nachtrunde</button><button class="btn pri" data-act="resolve">Nacht auflösen</button></div>` : `<p>Alle machen Pause. Prüfe, ob alle Wahlen von gestern eingetragen sind, dann auflösen.</p><button class="btn pri" data-act="resolve">Nacht auflösen</button>`}</div>`;
   const mayor = S._mayor ? `<div class="row small">Stattdessen stirbt: ${playerSelect("mayorRedirect", S._mayorTo || S._mayor).replace("<select", '<select data-mayor="1"')}</div>` : "";
   const dl = [...r.deaths, ...(S._manual||[])].map(id => esc(nm(id))).join(", ") || "niemand";
   const manual = `<div class="step"><span class="n">+</span><div><b>Weitere Tote (von Hand)</b><div class="voters">${alive().filter(p => !r.deaths.includes(p.id)).map(p => `<button class="voter" aria-pressed="${(S._manual||[]).includes(p.id)}" data-manual="${p.id}">${esc(p.name)}</button>`).join("")}</div></div></div>`;
   const nightRole = p => { const r = R[actsAs(p)]; return r && !AUTO.has(r.id) && /Nacht/.test(r.timing) && r.timing !== "1. Nacht"; };
-  const infos = S.players.filter(p => (p.alive || p.diedNight === S.n) && (infoFor(p) || nightRole(p))).map(p => `<div class="row small"><b>${esc(p.name)}</b> (${esc(roleName(actsAs(p)))}): <input type="text" data-info="${p.id}" value="${esc((S.info[S.n]||{})[p.id] || infoFor(p))}" style="flex:1;min-width:200px" aria-label="Info für ${esc(p.name)}"></div>`).join("");
+  const infos = S.players.filter(p => (p.alive || p.diedNight === S.n) && (infoFor(p) || nightRole(p))).map(p => `<div class="row small"><b>${esc(p.name)}</b> (${esc(roleName(actsAs(p)))}): <input type="text" data-info="${p.id}" value="${esc((S.info[S.n]||{})[p.id] || infoFor(p))}" style="flex:1;min-width:200px" aria-label="Info für ${esc(p.name)}">${infoRel(p, S.n)}</div>`).join("");
   const rk = S.players.filter(p => actsAs(p) === "rabenhueter" && p.diedNight === S.n);
   return `<h2>Nacht ${S.n}</h2>
   ${r.steps.map((s,i) => `<div class="step"><span class="n">${i+1}</span><div><b>${s[0]}</b><div>${s[1]}</div></div></div>`).join("")}
   ${mayor}${manual}
   <div class="step"><span class="n">→</span><div><b>Tote dieser Nacht</b><div>${dl}</div>${rk.length ? `<div class="hint">Rabenhüter ${esc(rk[0].name)} ist gestorben: Er kommt morgen in die Sprechstunde und wählt.</div>` : ""}</div></div>
-  <h2>Infos für die Sprechstunde morgen</h2>${infos || `<p class="muted small">Keine Info-Rollen mit Nacht-Info.</p>`}
+  <h2>${S.talk === "nacht" ? "Infos für diese Nacht (beim Wecken geben)" : "Infos für die Sprechstunde morgen"}</h2>${S.room ? `<p class="small muted">📱 schickt die Info aufs Handy dieses Spielers. Spätere Änderungen gehen automatisch hinterher. Was in Klammern über Gift oder Trunkenbold steht, geht nicht raus.</p>` : ""}${infos || `<p class="muted small">Keine Info-Rollen mit Nacht-Info.</p>`}
   <div class="row" style="margin-top:12px"><button class="btn pri" data-act="dawn">Guten Morgen: Tag ${S.n} beginnen</button><button class="btn" data-act="reresolve">Neu berechnen</button></div>`;
 }
 
@@ -3016,7 +3022,7 @@ document.addEventListener("click", async e => {
     case "demoStart": demoStart(); break;
     case "demoEnd": demoEnd(); return render();
     case "add": { const v = document.getElementById("newName").value.trim(); if (!v) return; S.players.push(newPlayer(v)); renumber(); if (!S.room && S.players.length === 1 && S.phase === "setup") roomOpen(); break; }
-    case "del": S.players = S.players.filter(p => p.id !== pid); renumber(); break;
+    case "del": { const st = S.room && S.room.seats[pid]; if (st && st.tok) (S.room.skip = S.room.skip || []).push(st.tok); S.players = S.players.filter(p => p.id !== pid); renumber(); break; }
     case "up": { const i = S.players.findIndex(p => p.id === pid); if (i > 0){ [S.players[i-1], S.players[i]] = [S.players[i], S.players[i-1]]; renumber(); } break; }
     case "applySetup": applySetup(false); break;
     case "script": selectScript(t.dataset.sid); pickOpen = false; closeDlg(); if (S.script === "custom" && !(S.custom||[]).length) S.custom = SCRIPTS[0].roles.slice(); break;
@@ -3027,7 +3033,7 @@ document.addEventListener("click", async e => {
     case "copyShare": { const el = document.getElementById("shareUrl"); try{ await navigator.clipboard.writeText(el.value); t.textContent = "Kopiert"; }catch(_){ el.select(); } return; }
     case "shuffle": applySetup(true); break;
     case "autoBluff": { const used = inPlay(); const drunkB = S.players.filter(p => BELIEVER[p.role]).map(p => p.believes); const pool = ROLES.filter(r => r.team === "dorf" && scriptRoleIds().includes(r.id) && !used.has(r.id) && !drunkB.includes(r.id)).sort(() => Math.random() - .5); S.bluffs = pool.slice(0,3).map(r => r.id); break; }
-    case "start": if (S.players.some(p => !p.role)) { alertBox("Jeder Spieler braucht eine Rolle."); return; } autoScene("nacht"); S.phase = "night"; S.n = 1; log("Erste Nacht beginnt"); tab = "night"; break;
+    case "start": if (S.players.some(p => !p.role)) { alertBox("Jeder Spieler braucht eine Rolle."); return; } autoScene("nacht"); S.phase = "night"; S.n = 1; log("Erste Nacht beginnt"); tab = "night"; if (S.room && !DEMO) S.players.filter(p => (S.room.seats[p.id] || {}).tok).forEach(sendRole); break;
     case "toDay1": autoScene("morgen"); S.phase = "day"; S.n = 1; S.dawn = "Tag 1: Niemand ist gestorben."; log("Tag 1 beginnt"); tab = "talk"; break;
     case "timer": { clearInterval(tmr); let s = +t.dataset.sec; const el = document.getElementById("tmr"); tmr = setInterval(() => { s--; if (el) el.textContent = Math.floor(Math.max(s,0)/60) + ":" + String(Math.max(s,0)%60).padStart(2,"0"); if (s <= 0){ clearInterval(tmr); try{ navigator.vibrate && navigator.vibrate(300); }catch(_){} } }, 1000); return; }
     case "saveNom": autoScene("nominierung"); { const c = S._nom; const votes = (c.voters||[]).length; c.voters.forEach(id => { const p = P(id); if (p && !p.alive) p.ghost = false; }); S.noms.push({day:S.n, by:c.by, on:c.on, votes}); log(`${nm(c.by)} nominiert ${nm(c.on)}: ${votes} Stimmen`, c.on); S._nom = {}; break; }
@@ -3036,7 +3042,7 @@ document.addEventListener("click", async e => {
       if (p.role === "heiliger" && !has(p,"vergiftet")) { S.win = "Böse gewinnt: Der Heilige wurde hingerichtet."; log(S.win); }
       else if (p.role === "imp"){ const sw = S.players.find(q => q.alive && q.role === "scharlachrote_frau" && !has(q,"vergiftet")); if (sw && before >= 5){ sw.formerRole = sw.role; sw.role = "imp"; sw.newImp = true; sw.newImpFromSW = true; log(`${sw.name} (Scharlachrote Frau) wird Imp`, sw.id); } else checkWin(); }
       else checkWin(); break; }
-    case "toNight": autoScene("nacht"); S.phase = "night"; S.n += 1; S._res = null; S._mayor = null; S._mayorTo = null; log(`Nacht ${S.n} beginnt`); tab = "night"; break;
+    case "toNight": autoScene("nacht"); S.phase = "night"; S.n += 1; S._res = null; S._mayor = null; S._mayorTo = null; log(`Nacht ${S.n} beginnt`); tab = S.talk === "nacht" ? "talk" : "night"; break;
     case "resolve": case "reresolve": { S._heir = null; S._mayor = null; if (a === "resolve") S._manual = []; const r = resolveNight(); S._res = {steps:r.steps, deaths:r.deaths.map(p => p.id)};
       // Info-Rollen wachen nach dem Imp auf: Opfer dieser Nacht zählen schon als tot
       r.deaths.forEach(p => p._was = p.alive); r.deaths.forEach(p => p.alive = false);
@@ -3048,7 +3054,7 @@ document.addEventListener("click", async e => {
       dead.forEach(p => kill(p, "Nacht " + S.n));
       S.players.forEach(p => { setTag(p,"geschuetzt",false); if (p.newImpFromSW) p.newImpFromSW = false; if (p.newImp && p.newImpTold) { p.newImp = false; } if (p.newImp) p.newImpTold = true; });
       // Infos für Leichen-Rollen nach den Toden neu: Empath-Nachbarn gelten zur Nacht, bleiben wie berechnet
-      S.phase = "day"; S.dawn = `Tag ${S.n}: ` + (dead.length ? dead.map(p => p.name).join(", ") + " ist gestorben. Maske auf!" : "Niemand ist gestorben.") + " Ansage: „Die Turmuhr schlägt sechs." + (dead.length ? " Der Schamane zählt die Toten der Nacht …“" : " Heute Nacht hat der Dämon gehungert.“"); log(S.dawn); checkWin(); S._res = null; tab = "talk"; break; }
+      S.phase = "day"; S.dawn = `Tag ${S.n}: ` + (dead.length ? dead.map(p => p.name).join(", ") + " ist gestorben. Maske auf!" : "Niemand ist gestorben.") + " Ansage: „Die Turmuhr schlägt sechs." + (dead.length ? " Der Schamane zählt die Toten der Nacht …“" : " Heute Nacht hat der Dämon gehungert.“"); log(S.dawn); checkWin(); S._res = null; tab = S.talk === "nacht" ? "vote" : "talk"; break; }
     case "slay": { const tgt = P(document.getElementById("slayT").value), s = P(dlgPid); if (!tgt) return; setTag(s,"verbraucht",true); if (tgt.role === "imp" && s.role === "schlaechter" && !has(s,"vergiftet")){ kill(tgt,"Schlächter"); log(`Schlächter ${s.name} trifft den Imp ${tgt.name}`, tgt.id); const sw = S.players.find(q => q.alive && q.role === "scharlachrote_frau"); if (sw && alive().length + 1 >= 5){ sw.formerRole = sw.role; sw.role = "imp"; sw.newImp = true; sw.newImpFromSW = true; log(`${sw.name} wird Imp`, sw.id); } else checkWin(); } else log(`Schlächter ${s.name} schießt auf ${tgt.name}: nichts passiert`, s.id); openSheet(dlgPid); break; }
     case "pLog": { const v = document.getElementById("pLog").value.trim(); if (!v) return; log(v, dlgPid); save(); return openSheet(dlgPid); }
     case "addLog": { const v = document.getElementById("logIn").value.trim(); if (!v) return; log(v); break; }
@@ -3057,15 +3063,14 @@ document.addEventListener("click", async e => {
     case "importShow": document.getElementById("ioBox").innerHTML = `<textarea id="impTxt" placeholder="Gespeicherten Stand hier einfügen"></textarea><button class="btn pri" data-act="import">Laden</button>`; return;
     case "import": { try{ const st = JSON.parse(document.getElementById("impTxt").value); if (!st.players) throw 0; S = st; }catch(_){ document.getElementById("ioBox").insertAdjacentHTML("beforeend", `<p class="hint bad">Das ist kein gültiger Spielstand.</p>`); return; } break; }
     case "resetAsk": document.getElementById("ioBox").innerHTML = `<p class="hint bad">Neues Spiel mit denselben Spielern und demselben Skript? Rollen, Notizen und Protokoll werden gelöscht. <button class="btn bad" data-act="reset">Ja, neues Spiel</button></p>`; return;
-    case "reset": { const keep = S.players.map(p => [p.name, ((S.room || {}).seats || {})[p.id]]); const sc = S.script, only = S.onlyScript, cu = S.custom, sd = S.sdef, room = S.room; S = blank(); S.script = sc; S.sdef = sd; S.onlyScript = only; S.custom = cu;
+    case "reset": { const keep = S.players.map(p => [p.name, ((S.room || {}).seats || {})[p.id]]); const sc = S.script, only = S.onlyScript, cu = S.custom, sd = S.sdef, room = S.room, tk = S.talk, tks = S.talkSet; S = blank(); S.talk = tk || "tag"; S.talkSet = tks; S.script = sc; S.sdef = sd; S.onlyScript = only; S.custom = cu;
       S.room = room ? {code: room.code, key: room.key, seats:{}} : null; keep.forEach(([n, st]) => { const p = newPlayer(n); S.players.push(p); if (S.room && st && st.tok) S.room.seats[p.id] = {tok: st.tok}; }); renumber(); tab = "setup"; if (!S.room) roomOpen(); break; }
     case "roomOpen": roomOpen(); break;
     case "roomClose": roomClose(); break;
     case "roomCopy": { try{ await navigator.clipboard.writeText(roomUrl(S.room.code)); t.textContent = "Kopiert"; }catch(_){ document.getElementById("roomUrl").select(); } return; }
     case "roomSeat": seatAssign(t.dataset.tok, pid); break;
     case "roomAdd": { const c = phones().find(x => x.tok === t.dataset.tok); if (!c || !c.name) return; const p = newPlayer(c.name); S.players.push(p); renumber(); seatAssign(c.tok, p.id); break; }
-    case "roomRoles": S.players.filter(p => (S.room.seats[p.id] || {}).tok && showRole(p)).forEach(sendRole); break;
-    case "roomRole": { const p = P(dlgPid); if (p && showRole(p)) sendRole(p); break; }
+    case "roomRole": { const p = P(dlgPid); if (p && showRole(p) && S.phase !== "setup") sendRole(p); break; }
     case "roomMsg": { const p = P(dlgPid), v = (document.getElementById("roomMsg").value || "").trim(); if (!p || !v) return; sendMsg(p, v); break; }
     default: { const r = (await scriptAct(a, t)) || printAct(a); if (!r || r === "stop") return; }
   }
@@ -3090,7 +3095,12 @@ document.addEventListener("change", e => {
   if (d.done !== undefined){ S.talked[d.done][d.pid] = t.checked; save(); return render(); }
   if (d.nom){ S._nom = S._nom || {}; S._nom[d.nom] = t.value; return render(); }
   if (d.mayor){ S._mayorTo = t.value; return save(); }
-  if (d.info){ S.info[S.n] = S.info[S.n] || {}; S.info[S.n][d.info] = t.value; return save(); }
+  if (d.info){ const n = d.n || S.n; S.info[n] = S.info[n] || {}; S.info[n][d.info] = t.value; save(); const pv = document.querySelector(`[data-relpv="${n}_${d.info}"]`); if (pv) pv.textContent = "Handy zeigt: „" + pubInfo(t.value) + "“"; return; }
+  if (d.rel !== undefined){ const n = d.rel; S.rel = S.rel || {}; const m = S.rel[n] = S.rel[n] || {}; m[d.pid] = t.checked;
+    if (t.checked && !(S.info[n] || {})[d.pid]){ const inp = document.querySelector(`[data-info="${d.pid}"][data-n="${n}"], [data-info="${d.pid}"]`); if (inp && inp.value){ S.info[n] = S.info[n] || {}; S.info[n][d.pid] = inp.value; } }
+    if (S.room && t.checked) log(`${nm(d.pid)}: Info ${n == 1 ? "der ersten Nacht" : "von Nacht " + n} aufs Handy geschickt`, d.pid); save(); return render(); }
+  if (d.talkmode){ S.talk = d.talkmode; S.talkSet = true; save(); return render(); }
+  if (d.roommove){ const i = S.players.findIndex(p => p.id === d.roommove), j = +t.value - 1; if (i >= 0 && j >= 0){ const [p] = S.players.splice(i, 1); S.players.splice(j, 0, p); renumber(); save(); } return render(); }
   if (d.talknote){ const v = t.value.trim(); if (v){ log(v, d.talknote); t.value = ""; save(); } return; }
   if (d.claim){ P(d.claim).claim = t.value; return save(); }
   const pid = document.getElementById("dlg").dataset.pid, p = P(pid);
@@ -3156,7 +3166,7 @@ let MODE = null; try{ MODE = localStorage.getItem("mode"); }catch(_){}
 const isLocked = () => { try{ return localStorage.getItem("locked") === "1"; }catch(_){ return false; } };
 if (isLocked()) MODE = "spieler";
 function setMode(m){
-  if (isLocked()) m = "spieler"; MODE = m; try{ m ? localStorage.setItem("mode", m) : localStorage.removeItem("mode"); }catch(_){} if (m === "spielleiter" && S.room && !NET.host) netHost(); else if (m !== "spielleiter" && NET.host) netStop(); render(); }
+  if (isLocked()) m = "spieler"; MODE = m; try{ m ? localStorage.setItem("mode", m) : localStorage.removeItem("mode"); }catch(_){} if (m === "spielleiter" && !S.room && SRV && !DEMO && S.phase === "setup") roomOpen(); else if (m === "spielleiter" && S.room && !NET.host) netHost(); else if (m !== "spielleiter" && NET.host) netStop(); render(); }
 function renderStart(){
   document.getElementById("tabs").innerHTML = ""; document.getElementById("modeBtn").hidden = true;
   document.getElementById("phaseLbl").textContent = "Wer bist du heute?";
@@ -3807,7 +3817,7 @@ document.addEventListener("visibilitychange", () => { if (document.hidden) retur
 const seatOfTok = tok => tok && S.room ? S.players.find(p => (S.room.seats[p.id] || {}).tok === tok) : null;
 function hostData(m){
   if (!m || typeof m !== "object" || !S.room) return;
-  if (m.k === "guests"){ NET.guests = Array.isArray(m.list) ? m.list : []; sndHostState(); return netRefresh(); }
+  if (m.k === "guests"){ NET.guests = Array.isArray(m.list) ? m.list : []; lobbyFill(); sndHostState(); return netRefresh(); }
   if (m.k === "sstate"){ SND.scene = m.scene || ""; SND.vol = +m.vol || 0; SND.mvol = +m.mvol || 0; SND.loops = Array.isArray(m.loops) ? m.loops : []; return sndRefresh(); }
 }
 // Öffentlicher Stand: nichts, was nicht ohnehin am Tisch angesagt wird
@@ -3816,12 +3826,13 @@ function pubState(){
   return {k:"pub", s: S.script || "tb", c: own ? scriptRoleIds() : undefined, n: isUser(S.script) ? scriptOf(S.script).name : undefined,
     p: S.players.map(p => ({name:p.name, alive:p.alive, ghost:p.ghost})), ph: phaseText(), phase: S.phase, day: S.n,
     noms: S.phase === "day" ? S.noms.filter(x => x.day === S.n).map(x => ({by:nm(x.by), on:nm(x.on), votes:x.votes})) : [],
-    need: needed(), dawn: S.phase === "day" ? S.dawn || "" : "", win: S.win || ""};
+    need: needed(), dawn: S.phase === "day" ? S.dawn || "" : "", win: S.win || "", talk: S.talk === "nacht" ? "nacht" : "tag"};
 }
 // Eigene Daten eines Handys: nur Platz, Name, die vom Spielleiter geschickte Rolle und seine Nachrichten
 function meState(p){
   const st = S.room.seats[p.id] || {};
-  return {k:"me", seat: p.seat, name: p.name, role: st.sent || "", msgs: st.msgs || []};
+  const infos = Object.keys(S.rel || {}).sort((a, b) => a - b).flatMap(n => S.rel[n][p.id] && (S.info[n] || {})[p.id] ? [{when: n == 1 ? "Erste Nacht" : "Nacht " + n, text: pubInfo(S.info[n][p.id])}] : []);
+  return {k:"me", seat: p.seat, name: p.name, role: S.phase === "setup" ? "" : st.sent || "", msgs: st.msgs || [], infos};
 }
 function netPush(){
   if (!NET.host || !NET.on || !S.room) return;
@@ -3834,11 +3845,53 @@ const phones = () => NET.guests.filter(c => c.kind === "spieler");
 const sounds = () => NET.guests.filter(c => c.kind === "sound" && c.on);
 function seatAssign(tok, pid){
   if (!tok) return; Object.values(S.room.seats).forEach(st => { if (st.tok === tok) st.tok = ""; });
-  if (pid){ const st = S.room.seats[pid] = S.room.seats[pid] || {}; st.tok = tok; }
+  S.room.skip = (S.room.skip || []).filter(t => t !== tok); if (!pid) S.room.skip.push(tok);
+  if (pid){ const st = S.room.seats[pid] = S.room.seats[pid] || {}; st.tok = tok; const p = P(pid); if (p && S.phase !== "setup" && showRole(p)) sendRole(p); }
   save(); netSync();
 }
 function sendRole(p){ const st = S.room.seats[p.id] = S.room.seats[p.id] || {}; st.sent = showRole(p) || ""; log(`${p.name}: Rolle aufs Handy geschickt (${roleName(st.sent)})`, p.id); }
 function sendMsg(p, text){ const st = S.room.seats[p.id] = S.room.seats[p.id] || {}; (st.msgs = st.msgs || []).push({when: phaseText(), text}); log(`Nachricht an ${p.name}: ${text}`, p.id); }
+// Was ein Handy von einer Info sieht: ohne HTML und ohne Spielleiter-Hinweise in Klammern
+const pubInfo = t => String(t || "").replace(/<[^>]+>/g, "").replace(/\s*\([^)]*(beeinträchtigt|falsch|Nachbarn|vergiftet|Trunkenbold)[^)]*\)/gi, "").replace(/\s+/g, " ").trim();
+const hasPhone = p => !!(S.room && !DEMO && (S.room.seats[p.id] || {}).tok);
+function infoRel(p, n){
+  if (!hasPhone(p)) return "";
+  const on = ((S.rel || {})[n] || {})[p.id];
+  return `<label class="chk small" title="Info aufs Handy dieses Spielers"><input type="checkbox" data-rel="${n}" data-pid="${p.id}" ${on ? "checked" : ""}> 📱 aufs Handy</label>${on ? `<div class="small muted" style="flex-basis:100%" data-relpv="${n}_${p.id}">Handy zeigt: „${esc(pubInfo((S.info[n] || {})[p.id]))}“</div>` : ""}`;
+}
+// Info der ersten Nacht zum Mitschreiben (und optional aufs Handy)
+function firstInfo(p){
+  const m = /^<div class="hint">([\s\S]*?)<\/div>/.exec(suggest(p, 1)), sg = m ? pubInfo(m[1]) : "";
+  const v = (S.info[1] || {})[p.id];
+  return `<div class="row small" style="margin-top:4px">Info: <input type="text" data-info="${p.id}" data-n="1" value="${esc(v !== undefined ? v : "")}" placeholder="${esc(sg || "was du ihm zeigst")}" style="flex:1;min-width:160px" aria-label="Info erste Nacht ${esc(p.name)}">${infoRel(p, 1)}</div>`;
+}
+// Neue Handys füllen im Aufbau die Spielerliste (gleicher Name = gleicher Spieler)
+function lobbyFill(){
+  if (!S.room || S.phase !== "setup" || DEMO) return false;
+  let ch = false; const skip = S.room.skip || [];
+  phones().forEach(c => { if (!c.name || seatOfTok(c.tok) || skip.includes(c.tok)) return;
+    let p = S.players.find(q => q.name.toLowerCase() === c.name.toLowerCase() && !(S.room.seats[q.id] || {}).tok);
+    if (!p){ if (S.players.length >= 20) return; p = newPlayer(c.name); S.players.push(p); renumber(); }
+    (S.room.seats[p.id] = S.room.seats[p.id] || {}).tok = c.tok; ch = true; });
+  if (ch) save();
+  return ch;
+}
+function guideCard(){
+  if (S.phase !== "setup" || DEMO) return "";
+  const n = S.players.length, ph = S.room ? S.players.filter(hasPhone).length : 0;
+  const st = (ok, t, body) => `<li style="margin:6px 0"><b>${ok ? "✓" : "○"} ${t}</b><div class="small">${body}</div></li>`;
+  const mode = `<div class="row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px">
+    <label class="chk"><input type="radio" name="talkmode" data-talkmode="tag" ${S.talk !== "nacht" ? "checked" : ""}> Hausregel: Gespräche tagsüber in der Sprechstunde, nachts ist Pause</label>
+    <label class="chk"><input type="radio" name="talkmode" data-talkmode="nacht" ${S.talk === "nacht" ? "checked" : ""}> Normal: Nachts weckst du die Spieler, Gespräche und Infos in der Nacht</label></div>`;
+  return `<div class="card notip" style="border-color:var(--brass);margin-bottom:10px"><h2 style="margin-top:0">So startest du das Spiel</h2><ol style="list-style:none;padding-left:0;margin:0">
+  ${st(!!S.room, "1. Spielraum öffnen und Einladung teilen", SRV ? (S.room ? "Den Link unten bei <b>Spieler-Handys</b> kopieren und in die Gruppe schicken, oder den QR-Code zeigen." : `<button class="btn sm pri" data-act="roomOpen">Spielraum öffnen</button>`) : "Braucht den Turmuhr-Server, siehe unten bei <b>Spieler-Handys</b>. Ohne Server trägst du alle von Hand ein.")}
+  ${st(n >= 5, "2. Spieler treten bei", `${n} in der Liste${S.room ? `, ${ph} davon mit Handy` : ""}. Wer beitritt, landet automatisch in der Liste. Wer ohne Handy spielt, trägst du von Hand ein.`)}
+  ${st(false, "3. Plätze zuordnen", "Sitzreihenfolge wie am Tisch: bei <b>Wer ist wer?</b> den Platz wählen oder in der Liste mit ↑ verschieben.")}
+  ${st(n > 0 && S.players.every(p => p.role), "4. Rollen verteilen", "Empfehlung übernehmen oder zufällig ziehen. Die Handys sehen davon noch nichts.")}
+  ${st(!!S.talkSet, "5. Spielmodus wählen", mode)}
+  ${st(false, "6. Erste Nacht beginnen", `Ganz unten. ${S.room ? "Erst jetzt bekommt jedes zugeordnete Handy seine eigene Rolle, und nur die." : ""}`)}
+  </ol></div>`;
+}
 function qrSvg(url, n){ try{ const q = qrcode(0, "M"); q.addData(url); q.make(); return q.createSvgTag(n || 4, 2); }catch(_){ return ""; } }
 function srvHelp(){
   return `<p class="small">Spieler-Handys und Soundanlage laufen über den <b>Turmuhr-Server</b>, ein kleines Programm ohne Installation für einen PC (Windows oder Linux):</p>
@@ -3854,7 +3907,9 @@ function vRoom(){
   const url = roomUrl(S.room.code), svg = qrSvg(url);
   const devs = phones(), live = devs.filter(c => c.on).length, snd = sounds().length;
   const opts = (tok) => { const cur = seatOfTok(tok); return `<select data-roomseat="${esc(tok)}" aria-label="Platz zuordnen"><option value="">– kein Platz –</option>${S.players.map(p => `<option value="${p.id}" ${cur && cur.id === p.id ? "selected" : ""}>${p.seat} · ${esc(p.name)}</option>`).join("")}</select>`; };
+  const moveSel = p => `<select data-roommove="${p.id}" aria-label="Platz für ${esc(p.name)}">${S.players.map((q, i) => `<option value="${i + 1}" ${q.id === p.id ? "selected" : ""}>Platz ${i + 1}${q.id === p.id ? "" : " (" + esc(q.name) + ")"}</option>`).join("")}</select>`;
   const rows = devs.map(c => { const p = seatOfTok(c.tok), guess = !p && S.players.find(q => q.name.toLowerCase() === (c.name || "").toLowerCase() && !(S.room.seats[q.id] || {}).tok);
+    if (p) return `<tr><td>${esc(c.name || "?")}${c.on ? "" : ` <span class="small muted">(offline)</span>`}${p.name.toLowerCase() !== (c.name || "").toLowerCase() ? ` <span class="small muted">= ${esc(p.name)}</span>` : ""}</td><td>${moveSel(p)} <button class="btn sm" data-act="roomSeat" data-tok="${esc(c.tok)}" data-pid="" title="Handy von diesem Platz lösen">lösen</button></td></tr>`;
     return `<tr><td>${esc(c.name || "?")}${c.on ? "" : ` <span class="small muted">(offline)</span>`}</td><td>${opts(c.tok)}${guess ? ` <button class="btn sm" data-act="roomSeat" data-tok="${esc(c.tok)}" data-pid="${guess.id}">= ${esc(guess.name)}</button>` : ""}${!p && !guess && S.phase === "setup" && c.name ? ` <button class="btn sm" data-act="roomAdd" data-tok="${esc(c.tok)}">als Spieler eintragen</button>` : ""}</td></tr>`; }).join("");
   const seated = S.players.filter(p => (S.room.seats[p.id] || {}).tok);
   const roles = seated.filter(p => p.role).length;
@@ -3863,15 +3918,15 @@ function vRoom(){
   <div style="flex:1;min-width:200px"><p class="small">Spieler scannen den Code oder öffnen den Link (selbes WLAN oder Hotspot wie der Server-PC).</p><div class="row"><input type="text" id="roomUrl" value="${esc(url)}" readonly style="flex:1;min-width:160px" aria-label="Einladungslink"><button class="btn sm" data-act="roomCopy">Kopieren</button></div>
   <p class="small">${esc(NET.status)} · ${live} Handy${live === 1 ? "" : "s"} online · ${snd ? "Soundanlage verbunden" : "keine Soundanlage"}</p>
   <p class="small muted">Lass diese App offen. Sperrt sich das Handy, verbinden sich alle danach selbst neu.</p></div></div>
-  ${devs.length ? `<h3>Wer ist wer?</h3><p class="small muted">Erst wenn du ein Handy einem Platz zuordnest, bekommt es Rolle und Nachrichten für diesen Platz.</p><div class="tablewrap"><table><tr><th>Handy</th><th>Platz</th></tr>${rows}</table></div>` : ""}
-  ${seated.length ? `<div class="row" style="margin-top:8px"><button class="btn" data-act="roomRoles" ${roles ? "" : "disabled"}>Rollen an ${roles} zugeordnete Handys schicken</button><span class="small muted">Trunkenbold &amp; Co. bekommen die Rolle, die sie zu sein glauben.</span></div>` : ""}
+  ${devs.length ? `<h3>Wer ist wer?</h3><p class="small muted">Wer beitritt, steht automatisch in der Spielerliste. Hier setzt du jeden auf seinen Platz am Tisch. Rolle und Infos bekommt ein Handy nur für den Platz, dem es zugeordnet ist.</p><div class="tablewrap"><table><tr><th>Handy</th><th>Platz</th></tr>${rows}</table></div>` : ""}
+  ${seated.length ? `<p class="small muted" style="margin-top:8px">${S.phase === "setup" ? `Die Rollen gehen automatisch an ${seated.length} Handy${seated.length === 1 ? "" : "s"}, sobald du die erste Nacht beginnst.` : `${seated.length} Handy${seated.length === 1 ? " hat" : "s haben"} ihre Rolle.`} Trunkenbold &amp; Co. bekommen die Rolle, die sie zu sein glauben.</p>` : ""}
   <div class="row" style="margin-top:8px"><button class="btn sm bad" data-act="roomClose">Raum schließen</button></div></div>`;
 }
 function roomSheet(p){
   if (!S.room || DEMO) return "";
   const st = S.room.seats[p.id] || {};
   if (!st.tok) return `<h3 style="margin-top:10px">Handy</h3><p class="small muted">Kein Handy zugeordnet (Aufbau → Spielraum).</p>`;
-  return `<h3 style="margin-top:10px">Handy</h3><div class="row"><button class="btn sm" data-act="roomRole" ${showRole(p) ? "" : "disabled"}>${st.sent ? "Rolle erneut schicken" : "Rolle schicken"}</button><span class="small muted">${st.sent ? "gesehen: " + esc(roleName(st.sent)) : "noch keine Rolle geschickt"}</span></div>
+  return `<h3 style="margin-top:10px">Handy</h3><div class="row">${S.phase === "setup" ? `<span class="small muted">Die Rolle geht beim Start der ersten Nacht automatisch raus.</span>` : `<button class="btn sm" data-act="roomRole" ${showRole(p) ? "" : "disabled"}>${st.sent && st.sent === showRole(p) ? "Rolle erneut schicken" : "Neue Rolle schicken"}</button><span class="small muted">${st.sent ? "Handy zeigt: " + esc(roleName(st.sent)) : "noch keine Rolle geschickt"}</span>`}</div>
   <div class="row" style="margin-top:6px"><input type="text" id="roomMsg" placeholder="Private Nachricht, z. B. Nachtinfo" style="flex:1"><button class="btn" data-act="roomMsg">Schicken</button></div>
   ${(st.msgs || []).slice(-3).reverse().map(m => `<div class="entry small"><b>${esc(m.when)}</b> · ${esc(m.text)}</div>`).join("")}`;
 }
@@ -3909,16 +3964,23 @@ function guestData(m){
     Q.script = m.s; Q.custom = m.c || []; Q.sdef = isUser(m.s) ? {id:m.s, name:m.n || "Eigenes Skript", en:"vom Spielleiter", stufe:3, min:5, max:20, desc:"Eigenes Skript des Spielleiters.", roles:m.c || []} : null;
     const old = Q.players;
     Q.players = (m.p || []).map(x => { const q = old.find(o => o.name === x.name) || {id:"q" + rnd(6, "abcdefghijkmnopqrstuvwxyz"), name:x.name, claim:"", guess:"", note:""}; q.alive = !!x.alive; q.ghost = !!x.ghost; return q; });
-    Q.live = Object.assign(Q.live || {}, {ph:m.ph, phase:m.phase, noms:m.noms || [], need:m.need, dawn:m.dawn, win:m.win});
+    Q.live = Object.assign(Q.live || {}, {ph:m.ph, phase:m.phase, day:m.day, noms:m.noms || [], need:m.need, dawn:m.dawn, win:m.win, talk:m.talk});
   }
   if (m.k === "me"){
-    const L = Q.live = Q.live || {}; const fresh = (m.msgs || []).length > (L.msgs || []).length || (m.role && m.role !== L.role);
-    L.seat = m.seat; L.role = m.role; L.msgs = m.msgs || [];
+    const L = Q.live = Q.live || {}; const fresh = (m.msgs || []).length > (L.msgs || []).length || (m.role && m.role !== L.role) || JSON.stringify(m.infos || []) !== JSON.stringify(L.infos || []);
+    L.seat = m.seat; L.role = m.role; L.msgs = m.msgs || []; L.infos = m.infos || [];
     const me = m.seat ? Q.players[m.seat - 1] : null;
     if (me){ Q.meId = me.id; if (m.role && R[m.role]){ Q.me.role = m.role; me.claim = m.role; me.claimSure = true; } }
     if (fresh && navigator.vibrate) try{ navigator.vibrate(200); }catch(_){}
   }
   qSave(); netRefresh();
+}
+function phaseHint(L){
+  if (!L.phase || L.phase === "setup" || L.win) return "";
+  const t = L.talk === "nacht"
+    ? (L.phase === "night" ? "Augen zu. Der Spielleiter weckt dich, wenn du dran bist." : "Redet offen miteinander. Einzelgespräche und Infos gibt es nachts.")
+    : (L.phase === "night" ? (L.day === 1 ? "Erste Nacht: Der Spielleiter holt jeden kurz allein zu sich." : "Nacht = Pause. Deine Wahl für die Nacht hast du in der Sprechstunde gesagt.") : "Sprechstunde: Du gehst kurz allein zum Spielleiter, sagst deine Wahl für die Nacht und bekommst deine Info.");
+  return `<p class="small muted" style="margin:4px 0">${t}</p>`;
 }
 function liveCard(){
   const cfg = netGuestCfg(); if (!cfg || cfg.kind !== "spieler") return "";
@@ -3927,7 +3989,9 @@ function liveCard(){
   return `<div class="card notip" style="border-color:var(--brass);margin-bottom:10px"><div class="row" style="justify-content:space-between;align-items:center"><h3 style="margin:0">${esc(L.ph || "Spielraum " + cfg.code)}</h3><span class="small ${on ? "" : "bad"}">${on ? "● live" : "○ " + esc(NET.status || "getrennt")}</span></div>
   ${L.win ? `<div class="banner">${esc(L.win)}</div>` : ""}${L.dawn ? `<p class="small">${esc(L.dawn)}</p>` : ""}
   ${L.phase === "day" ? `<p class="small muted" style="margin:4px 0">Nötig für eine Hinrichtung: ${L.need} Stimmen</p>${noms || `<div class="small muted">Noch keine Nominierung heute.</div>`}` : ""}
-  ${!L.seat ? `<p class="small muted">Angemeldet als <b>${esc(cfg.name || "?")}</b>. Der Spielleiter ordnet dich gleich deinem Platz zu.</p>` : ""}
+  ${!L.seat ? `<p class="small muted">Angemeldet als <b>${esc(cfg.name || "?")}</b>. Der Spielleiter ordnet dich gleich deinem Platz zu.</p>` : L.phase === "setup" ? `<p class="small muted">Du sitzt auf Platz ${L.seat}. Deine Rolle bekommst du, wenn die erste Nacht beginnt.</p>` : ""}
+  ${phaseHint(L)}
+  ${(L.infos || []).length ? `<div style="margin-top:6px"><b class="small">Deine Infos</b>${L.infos.slice().reverse().map(x => `<div class="entry small"><b>${esc(x.when)}</b> · ${esc(x.text)}</div>`).join("")}</div>` : ""}
   ${r ? `<details style="margin-top:6px"><summary>Meine Rolle anzeigen</summary><div class="rl" style="margin-top:6px"><span class="disc ${["scherge","daemon"].includes(r.team) ? "evil" : ""}">${icon(r.id)}</span><div><b>${esc(r.name)}</b> <span class="pill t-${r.team}">${TEAMNAME[r.team]}</span><div class="small">${esc(r.ability)}</div></div></div></details>` : ""}
   ${(L.msgs || []).length ? `<details style="margin-top:6px" ${ptab === "pme" ? "open" : ""}><summary>Vom Spielleiter (${L.msgs.length})</summary>${L.msgs.slice().reverse().map(x => `<div class="entry small"><b>${esc(x.when)}</b> · ${esc(x.text)}</div>`).join("")}</details>` : ""}
   <div class="row" style="margin-top:6px;justify-content:flex-end"><button class="btn sm" data-pact="leaveRoom">Raum verlassen</button></div></div>`;
@@ -4030,6 +4094,6 @@ if (MODE === "sound" && !(netGuestCfg() || {}).kind) MODE = null;
 render();
 initStore();
 if (readShare()) offerShare();
-srvCheck().then(() => { render(); if (MODE === "spielleiter" && S.room && !DEMO) netHost(); else netRetry(); });
+srvCheck().then(() => { if (MODE === "spielleiter" && SRV && !S.room && !DEMO && S.phase === "setup") roomOpen(); render(); if (MODE === "spielleiter" && S.room && !DEMO) netHost(); else netRetry(); });
 </script>
 <script>if ("serviceWorker" in navigator){ const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update()).catch(() => {}); let done = false; navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !done){ done = true; location.reload(); } }); }</script></body></html>
