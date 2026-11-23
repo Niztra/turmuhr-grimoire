@@ -12,9 +12,11 @@ Spieler-Handys sowie die Soundanlage mit dem Handy des Spielleiters verbindet.
    - Windows: Doppelklick. SmartScreen warnt bei unbekannten Programmen: „Weitere Informationen“ → „Trotzdem ausführen“.
      Fragt die Firewall, den Zugriff im **privaten Netzwerk** erlauben.
    - Linux: `chmod +x turmuhr-server-linux && ./turmuhr-server-linux`
-2. Der Browser öffnet sich mit einem QR-Code. Der Spielleiter scannt ihn mit dem Handy und macht dort als Spielleiter weiter.
-3. Am PC „Dieser PC ist die Soundanlage“ wählen.
-4. Spielleiter: Aufbau → Spieler-Handys → Spielraum öffnen. Die Spieler scannen den dort gezeigten QR-Code.
+2. Der Browser öffnet sich als Soundanlage und zeigt einen **6-stelligen Kopplungscode**. Einmal „Ton freischalten“ klicken (geht auch per Fernsteuerung).
+3. Am Spielleiter-Handy (normale App) unter Aufbau → „Mit dem PC koppeln“ den Code eingeben. Das Handy wechselt zur App auf dem PC, nimmt das Spiel mit und öffnet den Spielraum.
+4. Einladungslink und QR-Code stehen dann am Handy unter Aufbau: kopieren, per WhatsApp schicken oder zeigen.
+
+**Wie das Handy den PC findet:** Mit Internet meldet die PC-Seite den Code bei einem kostenlosen Vermittlungsdienst (PeerJS) an, das Handy fragt dort nach der Adresse. Ohne Internet steckt die Adresse im Code selbst, wenn der PC in einem üblichen Netz hängt (192.168.x.x oder iPhone-Hotspot) und Port 8080 frei ist. Codes, die mit 3 bis 9 beginnen, gehen nur mit Internet.
 
 ## Netzwerk
 
