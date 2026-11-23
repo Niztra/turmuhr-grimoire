@@ -3048,7 +3048,7 @@ function demoStart(){
   tab = "grim";
 }
 function simStart(){
-  if (!SRV) return;
+  if (!hub()) return;
   if (S.room && !DEMO) netStop();
   DEMO = true; S = blank(); S.sim = true; S.notes = "Simulation mit Bot-Spielern. Oben auf „Simulation beenden“ tippen, dann ist dein echtes Spiel wieder da.";
   tab = "setup"; undoReset(); save(); setTimeout(() => { roomOpen(); render(); }, 900); // kurz warten, bis der Server das echte Spiel losgelassen hat
@@ -3091,6 +3091,7 @@ document.addEventListener("click", async e => {
   switch (a){
     case "goSetup": tab = "setup"; break;
     case "pair": pairStart(); return;
+    case "unpair": roomClose(); linkSet(""); log("Vom PC entkoppelt"); break;
     case "goPair": tab = "setup"; render(); setTimeout(() => { const i = document.getElementById("pairCode"); if (i){ i.scrollIntoView({block:"center"}); i.focus(); } }, 50); return;
     case "undo": undoStep(1); render(); return;
     case "redo": redoStep(); render(); return;
@@ -3102,7 +3103,7 @@ document.addEventListener("click", async e => {
     case "exportLog": downloadText("spielverlauf-" + new Date().toISOString().slice(0, 10) + ".txt", timelineText()); return;
     case "demo": demo(); break;
     case "demoStart": demoStart(); break;
-    case "demoEnd": { const real = !!S.sim; demoEnd(); if (real && S.room && SRV) netHost(); return render(); }
+    case "demoEnd": { const real = !!S.sim; demoEnd(); if (real && S.room && hub()) netHost(); return render(); }
     case "simStart": simStart(); break;
     case "simView": { const c = NET.guests.find(x => x.tok === t.dataset.tok); if (!c || !S.room) return; window.open(appBase() + "#sim-" + S.room.code + "-" + c.tok + "-" + encodeURIComponent(c.name || "Bot"), "_blank"); return; }
     case "add": { const v = document.getElementById("newName").value.trim(); if (!v) return; S.players.push(newPlayer(v)); renumber(); if (!S.room && S.players.length === 1 && S.phase === "setup") roomOpen(); break; }
@@ -3256,7 +3257,7 @@ let MODE = null; try{ MODE = localStorage.getItem("mode"); }catch(_){}
 const isLocked = () => { try{ return localStorage.getItem("locked") === "1"; }catch(_){ return false; } };
 if (isLocked()) MODE = "spieler";
 function setMode(m){
-  if (isLocked()) m = "spieler"; MODE = m; try{ m ? localStorage.setItem("mode", m) : localStorage.removeItem("mode"); }catch(_){} if (m === "spielleiter" && !S.room && SRV && !DEMO && S.phase === "setup") roomOpen(); else if (m === "spielleiter" && S.room && !NET.host) netHost(); else if (m !== "spielleiter" && NET.host) netStop(); render(); }
+  if (isLocked()) m = "spieler"; MODE = m; try{ m ? localStorage.setItem("mode", m) : localStorage.removeItem("mode"); }catch(_){} if (m === "spielleiter" && !S.room && hub() && !DEMO && S.phase === "setup") roomOpen(); else if (m === "spielleiter" && S.room && !NET.host) netHost(); else if (m !== "spielleiter" && NET.host) netStop(); render(); }
 function renderStart(){
   document.getElementById("tabs").innerHTML = ""; document.getElementById("modeBtn").hidden = true;
   document.getElementById("phaseLbl").textContent = "Wer bist du heute?";
@@ -3943,11 +3944,94 @@ const DLSRV = "https://github.com/Niztra/turmuhr-grimoire/releases/download/serv
 let SRV = null; // Antwort von api/info, wenn diese Seite vom Turmuhr-Server kommt
 async function srvCheck(){ try{ const r = await fetch("api/info", {cache:"no-store"}); const j = await r.json(); SRV = j && j.server === "turmuhr" ? j : null; }catch(_){ SRV = null; } }
 const appBase = () => (SRV && /^(localhost|127\.|\[::1\])/.test(location.hostname) && (SRV.urls || [])[0]) || location.href.split("#")[0].split("?")[0];
-const roomUrl = code => appBase() + "#raum-" + code;
-const api = (p, body) => fetch("api/" + p, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body), cache:"no-store"})
+const roomUrl = code => appBase() + "#raum-" + code + (viaLink() ? "." + LINK.pc : "");
+const api0 = (p, body) => fetch("api/" + p, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body), cache:"no-store"})
   .then(r => r.json().then(j => Object.assign(j, {ok: r.ok && !!j.ok}))).catch(() => ({ok:false, net:true, error:"Server nicht erreichbar."}));
-function roomOpen(){ if (offNet() || !SRV) return; if (!S.room) S.room = {code: rnd(6, CODECHARS), seats:{}}; if (!S.room.key) S.room.key = rnd(32, TOKCHARS); save(); netHost(); }
-function roomClose(){ if (S.room && S.room.key && SRV) api("close", {key:S.room.key}); netStop(); S.room = null; save(); }
+/* --- Verbindung über die PC-Seite (WebRTC): Die installierte App (GitHub) bleibt die App.
+   Sie spricht per PeerJS/WebRTC mit der Soundanlagen-Seite im Browser des PCs, die alles an das Server-Programm weiterreicht.
+   Direkt im selben Netz, sonst über einen Relay-Server. Gebraucht wird Internet für den Verbindungsaufbau. --- */
+const LINK = {pc:"", peer:null, conn:null, ok:false, connecting:false, wait:[], rpc:{}, seq:0, stream:null};
+try{ LINK.pc = localStorage.getItem("pcLink") || ""; LINK.ok = !!LINK.pc; }catch(_){}
+const hub = () => !!SRV || !!LINK.pc;
+const viaLink = () => !SRV && !!LINK.pc;
+function linkSet(code){ LINK.pc = code || ""; LINK.ok = !!code; try{ code ? localStorage.setItem("pcLink", code) : localStorage.removeItem("pcLink"); }catch(_){}
+  try{ LINK.conn && LINK.conn.close(); }catch(_){} LINK.conn = null; }
+function linkFail(e){ LINK.connecting = false; LINK.wait.splice(0).forEach(([, j]) => j(e || new Error("Verbindung fehlgeschlagen"))); }
+function linkConn(){
+  if (LINK.conn && LINK.conn.open) return Promise.resolve(LINK.conn);
+  if (!window.Peer || !LINK.pc) return Promise.reject(new Error("kein PC"));
+  return new Promise((res, rej) => {
+    LINK.wait.push([res, rej]); if (LINK.connecting) return; LINK.connecting = true;
+    const go = () => { const c = LINK.peer.connect("turmuhr-pc-" + LINK.pc, {reliable:true});
+      c.on("open", () => { LINK.conn = c; LINK.connecting = false; LINK.wait.splice(0).forEach(([r]) => r(c)); });
+      c.on("data", linkData);
+      c.on("close", () => { if (LINK.conn === c){ LINK.conn = null; if (LINK.stream) LINK.stream._drop(); } });
+      c.on("error", () => linkFail()); };
+    if (!LINK.peer || LINK.peer.destroyed){
+      const p = LINK.peer = new Peer();
+      p.on("open", go);
+      p.on("error", e => { linkFail(e); if (LINK.stream) LINK.stream._drop(); if (["network","server-error","socket-error","socket-closed"].includes(e.type)){ try{ p.destroy(); }catch(_){} } });
+      p.on("disconnected", () => { setTimeout(() => { try{ !p.destroyed && p.disconnected && p.reconnect(); }catch(_){} }, 1500); });
+    } else if (LINK.peer.open) go(); else LINK.peer.once("open", go);
+    setTimeout(() => { if (LINK.connecting) linkFail(new Error("Zeit abgelaufen")); }, 10000);
+  });
+}
+function linkData(m){
+  if (!m || typeof m !== "object") return;
+  if (m.t === "res"){ const f = LINK.rpc[m.id]; delete LINK.rpc[m.id]; if (f) f(m.j || {ok:false}); return; }
+  const s = LINK.stream; if (!s || m.sid !== s.sid) return;
+  if (m.t === "op"){ s.readyState = 1; s.onopen && s.onopen(); }
+  else if (m.t === "ev"){ s.onmessage && s.onmessage({data: m.d}); }
+  else if (m.t === "er"){ if (m.rs === 2){ s.readyState = 2; LINK.stream = null; } else { s.readyState = 0; clearTimeout(s._rt); s._rt = setTimeout(s._start, 2500); } s.onerror && s.onerror(); }
+}
+function linkApi(p, body){
+  return linkConn().then(c => new Promise(res => { const id = ++LINK.seq; LINK.rpc[id] = res; c.send({t:"api", id, p, b: body});
+    setTimeout(() => { if (LINK.rpc[id]){ delete LINK.rpc[id]; res({ok:false, net:true, error:"Keine Antwort vom PC."}); } }, 8000); }))
+    .catch(() => ({ok:false, net:true, error:"Keine Verbindung zum PC. Läuft das Programm, ist die Seite am PC offen, und haben PC und Handy Internet?"}));
+}
+// Wie EventSource, nur über die PC-Seite
+function linkStream(q){
+  if (LINK.stream) LINK.stream.close();
+  const s = {sid: rnd(12, TOKCHARS), readyState: 0, onopen: null, onmessage: null, onerror: null,
+    close(){ s.readyState = 2; clearTimeout(s._rt); if (LINK.stream === s) LINK.stream = null; try{ LINK.conn && LINK.conn.open && LINK.conn.send({t:"close", sid: s.sid}); }catch(_){} },
+    _drop(){ if (s.readyState === 2) return; s.readyState = 0; s.onerror && s.onerror(); clearTimeout(s._rt); s._rt = setTimeout(s._start, 3000); },
+    _start(){ if (s.readyState === 2) return; linkConn().then(c => { if (s.readyState === 2) return; LINK.stream = s; c.send({t:"open", sid: s.sid, q}); }).catch(() => s._drop()); }};
+  LINK.stream = s; s._start(); return s;
+}
+const openStream = q => viaLink() ? linkStream(q) : new EventSource("api/events?" + q);
+
+// PC-Seite: leitet Verbindungen der App an das Server-Programm weiter (ein Datenstrom für alle)
+const BRIDGE = {es:null, sess:{}};
+function bridgeStart(){
+  if (BRIDGE.es && BRIDGE.es.readyState !== 2) return;
+  const es = BRIDGE.es = new EventSource("api/relay");
+  es.onmessage = e => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; } const c = BRIDGE.sess[m.s]; if (!c) return;
+    try{ if (m.x) c.send({t:"er", sid: m.s, rs: 0}); else c.send({t:"ev", sid: m.s, d: m.d}); }catch(_){} };
+  es.onerror = () => { Object.entries(BRIDGE.sess).forEach(([sid, c]) => { try{ c.send({t:"er", sid, rs: 0}); }catch(_){} }); BRIDGE.sess = {}; if (es.readyState === 2) setTimeout(bridgeStart, 2000); };
+}
+const RELAYAPI = /^(host|close|push|snd|sstate|bots)$/;
+function bridgeConn(c){
+  const mine = new Set();
+  c.on("open", () => { try{ c.send({k:"pc", urls: SRV.urls, pair: SRV.pair}); }catch(_){} });
+  c.on("data", async m => {
+    if (!m || typeof m !== "object") return;
+    if (m.t === "open" && typeof m.q === "string" && typeof m.sid === "string" && m.sid.length <= 40){
+      bridgeStart(); mine.forEach(sid => { delete BRIDGE.sess[sid]; api0("rclose", {sid}); }); mine.clear();
+      BRIDGE.sess[m.sid] = c; mine.add(m.sid);
+      const j = await api0("ropen", {sid: m.sid, q: m.q});
+      try{ c.send(j.ok && j.status === 200 ? {t:"op", sid: m.sid} : {t:"er", sid: m.sid, rs: j.status === 403 ? 2 : 0}); }catch(_){}
+      if (!(j.ok && j.status === 200)){ delete BRIDGE.sess[m.sid]; mine.delete(m.sid); }
+    } else if (m.t === "close" && mine.has(m.sid)){ delete BRIDGE.sess[m.sid]; mine.delete(m.sid); api0("rclose", {sid: m.sid}); }
+    else if (m.t === "api" && RELAYAPI.test(m.p)){
+      let j; try{ const r = await fetch("api/" + m.p, {method:"POST", headers:{"Content-Type":"application/json", "X-Turmuhr-Relay":"1"}, body: JSON.stringify(m.b || {})}); j = await r.json(); j.ok = r.ok && !!j.ok; }catch(_){ j = {ok:false, net:true, error:"Server nicht erreichbar."}; }
+      try{ c.send({t:"res", id: m.id, j}); }catch(_){}
+    }
+  });
+  c.on("close", () => { mine.forEach(sid => { delete BRIDGE.sess[sid]; api0("rclose", {sid}); }); mine.clear(); });
+}
+const api = (p, body) => viaLink() ? linkApi(p, body) : api0(p, body);
+function roomOpen(){ if (offNet() || !hub()) return; if (!S.room) S.room = {code: rnd(6, CODECHARS), seats:{}}; if (!S.room.key) S.room.key = rnd(32, TOKCHARS); save(); netHost(); }
+function roomClose(){ if (S.room && S.room.key && hub()) api("close", {key:S.room.key}); netStop(); S.room = null; save(); }
 function netStop(){ clearTimeout(NET.timer); try{ NET.es && NET.es.close(); }catch(_){} NET.es = null; NET.host = NET.on = NET.closed = false; NET.guests = []; wakeOff(); }
 async function wakeOn(){ try{ if (!NET.wake && navigator.wakeLock && !document.hidden) NET.wake = await navigator.wakeLock.request("screen"); NET.wake && NET.wake.addEventListener("release", () => NET.wake = null); }catch(_){} }
 function wakeOff(){ try{ NET.wake && NET.wake.release(); }catch(_){} NET.wake = null; }
@@ -3956,13 +4040,13 @@ document.addEventListener("focusout", () => setTimeout(() => { if (NET.dirty && 
 
 /* --- Spielleiter: schickt den Stand an den Server --- */
 async function netHost(){
-  if (!S.room || offNet() || MODE !== "spielleiter" || !SRV) return;
+  if (!S.room || offNet() || MODE !== "spielleiter" || !hub()) return;
   if (!S.room.key){ S.room.key = rnd(32, TOKCHARS); save(); }
   netStop(); NET.host = true; NET.code = S.room.code; NET.status = "Raum wird geöffnet …"; wakeOn(); netRefresh();
   const r = await api("host", {code:S.room.code, key:S.room.key});
   if (!NET.host) return;
   if (!r.ok){ NET.status = r.error || "Fehler beim Öffnen."; if (r.net) NET.timer = setTimeout(() => { if (NET.host) netHost(); }, 5000); return netRefresh(); }
-  const es = NET.es = new EventSource("api/events?role=host&key=" + encodeURIComponent(S.room.key));
+  const es = NET.es = openStream("role=host&key=" + encodeURIComponent(S.room.key));
   es.onopen = () => { NET.on = true; NET.status = "Raum offen."; netPush(); netRefresh();
     if (S.sim && !S.simBots){ S.simBots = true; save(); api("bots", {key:S.room.key, n:7}); } };
   es.onmessage = e => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; } hostData(m); };
@@ -4047,11 +4131,11 @@ function guideCard(){
   const mode = `<div class="row" style="flex-direction:column;align-items:flex-start;gap:4px;margin-top:4px">
     <label class="chk"><input type="radio" name="talkmode" data-talkmode="tag" ${S.talk !== "nacht" ? "checked" : ""}> Hausregel: Gespräche tagsüber in der Sprechstunde, nachts ist Pause</label>
     <label class="chk"><input type="radio" name="talkmode" data-talkmode="nacht" ${S.talk === "nacht" ? "checked" : ""}> Normal: Nachts weckst du die Spieler, Gespräche und Infos in der Nacht</label></div>`;
-  const sim = SRV && !DEMO ? `<div class="row small" style="margin-top:10px;align-items:center;border-top:1px solid var(--line);padding-top:8px"><span style="flex:1">🧪 Erst allein ausprobieren? Die Simulation füllt den Raum mit 7 Bot-Spielern. Du spielst Spielleiter und kannst jedes Bot-Handy ansehen.</span><button class="btn sm" data-act="simStart">Simulation starten</button></div>` : "";
+  const sim = hub() && !DEMO ? `<div class="row small" style="margin-top:10px;align-items:center;border-top:1px solid var(--line);padding-top:8px"><span style="flex:1">🧪 Erst allein ausprobieren? Die Simulation füllt den Raum mit 7 Bot-Spielern. Du spielst Spielleiter und kannst jedes Bot-Handy ansehen.</span><button class="btn sm" data-act="simStart">Simulation starten</button></div>` : "";
   return `<div class="card notip" style="border-color:var(--brass);margin-bottom:10px"><h2 style="margin-top:0">${S.sim ? "So läuft die Simulation" : "So startest du das Spiel"}</h2><ol style="list-style:none;padding-left:0;margin:0">
-  ${!SRV ? st(false, "1. Mit dem PC koppeln", `Starte das Turmuhr-Server-Programm auf dem PC mit den Lautsprechern. Er zeigt einen 6-stelligen Code. Tipp ihn hier ein, dann bekommst du Einladungslink und QR-Code für die Spieler.${pairBox()}`)
-    : st(!!S.room && NET.on, "1. Spielraum öffnen und Einladung teilen", S.room ? (NET.on ? "Schick den Link in die Gruppe oder lass den QR-Code scannen:" + inviteBox("roomUrlG") : `<span class="bad">${esc(NET.status || "Raum wird geöffnet …")}</span>`) : `<button class="btn sm pri" data-act="roomOpen">Spielraum öffnen</button>`)}
-  ${st(n >= 5, "2. Spieler treten bei", SRV ? `${n} in der Liste${S.room ? `, ${ph} davon mit Handy` : ""}. Wer beitritt, landet automatisch in der Liste. Wer ohne Handy spielt, trägst du von Hand ein.` : `${n} in der Liste. Ohne Server trägst du alle von Hand ein (unten bei <b>Spieler in Sitzreihenfolge</b>).`)}
+  ${!hub() ? st(false, "1. Mit dem PC koppeln", `Starte das Turmuhr-Server-Programm auf dem PC mit den Lautsprechern. Er zeigt einen 6-stelligen Code. Tipp ihn hier ein, dann bekommst du Einladungslink und QR-Code für die Spieler.${pairBox()}`)
+    : st(!!S.room && NET.on, "1. Spielraum öffnen und Einladung teilen" + (viaLink() ? ` <span class="small muted" style="font-weight:400">· PC ${fmtCode(LINK.pc)} <button class="btn sm" data-act="unpair">entkoppeln</button></span>` : ""), S.room ? (NET.on ? "Schick den Link in die Gruppe oder lass den QR-Code scannen:" + inviteBox("roomUrlG") : `<span class="bad">${esc(NET.status || "Raum wird geöffnet …")}</span>`) : `<button class="btn sm pri" data-act="roomOpen">Spielraum öffnen</button>`)}
+  ${st(n >= 5, "2. Spieler treten bei", hub() ? `${n} in der Liste${S.room ? `, ${ph} davon mit Handy` : ""}. Wer beitritt, landet automatisch in der Liste. Wer ohne Handy spielt, trägst du von Hand ein.` : `${n} in der Liste. Ohne Server trägst du alle von Hand ein (unten bei <b>Spieler in Sitzreihenfolge</b>).`)}
   ${st(false, "3. Plätze zuordnen", "Sitzreihenfolge wie am Tisch: bei <b>Wer ist wer?</b> den Platz wählen oder in der Liste mit ↑ verschieben.")}
   ${st(n > 0 && S.players.every(p => p.role), "4. Rollen verteilen", "Empfehlung übernehmen oder zufällig ziehen. Die Handys sehen davon noch nichts.")}
   ${st(!!S.talkSet, "5. Spielmodus wählen", mode)}
@@ -4081,19 +4165,23 @@ function pairGo(url, code){
   try{ PAIR.peer && PAIR.peer.destroy(); }catch(_){}
   setTimeout(() => { location.href = url + "#koppeln-" + code + (st && st.length < 900000 ? "~" + st : ""); }, 600);
 }
+function pairDone(code){
+  linkSet(code); PAIR.busy = false; PAIR.st = ""; log(`Mit dem PC gekoppelt (Code ${fmtCode(code)})`);
+  if (!S.room) roomOpen(); else netHost(); tab = "setup"; save(); render();
+}
 function pairStart(){
   const code = ((document.getElementById("pairCode") || {}).value || "").replace(/\D/g, "");
   if (code.length !== 6){ PAIR.st = "Der Code hat 6 Ziffern."; return render(); }
   PAIR.busy = true; PAIR.st = "Suche den PC …"; render();
   let done = false;
   const fallback = why => { if (done) return; done = true; try{ PAIR.peer && PAIR.peer.destroy(); }catch(_){}
-    const u = codeAddr(code); if (u) return pairGo(u, code);
+    const u = codeAddr(code); if (u){ PAIR.st = "Kein Internet: Ich öffne die App direkt vom PC (im Browser, nicht in der installierten App)."; return pairGo(u, code); }
     PAIR.busy = false; PAIR.st = why || "PC nicht gefunden. Läuft das Programm, und sind PC und Handy im Internet? Stimmt der Code?"; render(); };
   if (!window.Peer) return fallback();
   const peer = PAIR.peer = new Peer();
   const t = setTimeout(() => fallback(), 7000);
   peer.on("open", () => { const c = peer.connect("turmuhr-pc-" + code, {reliable:true});
-    c.on("data", m => { if (done || !m || m.k !== "pc" || !(m.urls || []).length) return; done = true; clearTimeout(t); pairGo(m.urls[0], code); }); });
+    c.on("data", m => { if (done || !m || m.k !== "pc") return; done = true; clearTimeout(t); try{ peer.destroy(); }catch(_){} pairDone(code); }); });
   peer.on("error", e => { if (["peer-unavailable","network","server-error","socket-error","socket-closed","browser-incompatible"].includes(e.type)){ clearTimeout(t); fallback(e.type === "peer-unavailable" ? "PC mit diesem Code nicht gefunden. Läuft das Programm noch, und stimmt der Code?" : ""); } });
 }
 // PC-Seite: Code beim Vermittlungsdienst anmelden, damit das Handy den PC auch über das Internet findet
@@ -4101,13 +4189,13 @@ function pairHost(){
   if (!SRV || !SRV.pair || !window.Peer || (PAIR.host && !PAIR.host.destroyed)) return;
   const peer = PAIR.host = new Peer("turmuhr-pc-" + SRV.pair);
   peer.on("open", () => { PAIR.hostSt = "ok"; if (MODE === "sound") renderSound(); });
-  peer.on("connection", c => c.on("open", () => { try{ c.send({k:"pc", urls: SRV.urls, pair: SRV.pair}); }catch(_){} }));
+  peer.on("connection", bridgeConn);
   peer.on("disconnected", () => { setTimeout(() => { try{ !peer.destroyed && peer.reconnect(); }catch(_){} }, 2000); });
   peer.on("error", e => { PAIR.hostSt = e.type === "unavailable-id" ? "busy" : "off"; if (MODE === "sound") renderSound(); try{ peer.destroy(); }catch(_){} setTimeout(pairHost, 8000); });
 }
 function vRoom(){
   if (offNet()) return "";
-  if (!SRV) return `<div class="card notip"><h2>Spielraum</h2><p class="small">Die Spieler treten per QR-Code mit ihrem Handy bei und sehen dort Skript, Mitspieler, Phase, Nominierungen und, wenn du willst, ihre eigene Rolle.</p>${srvHelp()}</div>`;
+  if (!hub()) return `<div class="card notip"><h2>Spielraum</h2><p class="small">Die Spieler treten per QR-Code mit ihrem Handy bei und sehen dort Skript, Mitspieler, Phase, Nominierungen und, wenn du willst, ihre eigene Rolle.</p>${srvHelp()}</div>`;
   if (!S.room) return `<div class="card notip"><h2>Spielraum</h2><p class="small">Öffnet einen Raum auf dem Turmuhr-Server. Die Spieler treten per QR-Code oder Link mit ihrem Handy bei und sehen dort Skript, Mitspieler, Phase, Nominierungen und, wenn du willst, ihre eigene Rolle. Auch die Soundanlage verbindet sich hier.</p><button class="btn pri" data-act="roomOpen">Spielraum öffnen</button></div>`;
   const url = roomUrl(S.room.code), svg = qrSvg(url);
   const devs = phones(), live = devs.filter(c => c.on).length, snd = sounds().length;
@@ -4139,11 +4227,11 @@ function roomSheet(p){
 /* --- Spieler und Soundanlage: Gast --- */
 function netGuestCfg(){ try{ return JSON.parse(localStorage.getItem("raum") || "null"); }catch(_){ return null; } }
 function netJoin(code, kind, name){
-  if (!SRV){ NET.status = "Diese Seite kommt nicht vom Turmuhr-Server. Öffne den Link vom QR-Code des Spielleiters."; return netRefresh(); }
+  if (!hub()){ NET.status = "Kein Spielraum gefunden. Öffne den Link vom Spielleiter noch einmal."; return netRefresh(); }
   let cfg = netGuestCfg(); if (!cfg || !cfg.tok || (kind === "spieler" && cfg.code !== code)) cfg = {code, tok: rnd(24, TOKCHARS), name: (cfg || {}).name};
   cfg.kind = kind; cfg.code = code; if (name) cfg.name = name; try{ localStorage.setItem("raum", JSON.stringify(cfg)); }catch(_){}
   netStop(); NET.code = code; NET.kind = kind; NET.status = "Verbinde mit dem Server …"; netRefresh();
-  const es = NET.es = new EventSource("api/events?" + new URLSearchParams({role: kind, tok: cfg.tok, name: kind === "sound" ? "Soundanlage" : cfg.name || "", code: code || ""}));
+  const es = NET.es = openStream(String(new URLSearchParams({role: kind, tok: cfg.tok, name: kind === "sound" ? "Soundanlage" : cfg.name || "", code: code || ""})));
   es.onopen = () => { NET.on = true; NET.status = "Verbunden."; if (kind === "sound") sndState(); netRefresh(); };
   es.onmessage = e => { let m; try{ m = JSON.parse(e.data); }catch(_){ return; } guestData(m); };
   es.onerror = () => { if (NET.es !== es) return; NET.on = false; NET.status = "Verbindung getrennt, verbinde neu …"; netRefresh(); };
@@ -4151,7 +4239,7 @@ function netJoin(code, kind, name){
 let netBusy = false;
 function netRetry(){
   if (NET.host || netBusy || (NET.es && NET.es.readyState !== 2)) return;
-  const cfg = netGuestCfg(); if (!SRV || !cfg || !cfg.kind || MODE !== (cfg.kind === "sound" ? "sound" : "spieler")) return;
+  const cfg = netGuestCfg(); if (!hub() || !cfg || !cfg.kind || MODE !== (cfg.kind === "sound" ? "sound" : "spieler")) return;
   netBusy = true; setTimeout(() => netBusy = false, 6000); netJoin(cfg.code, cfg.kind);
 }
 setInterval(netRetry, 5000);
@@ -4204,7 +4292,7 @@ function liveCard(){
   <div class="row" style="margin-top:6px;justify-content:flex-end"><button class="btn sm" data-pact="leaveRoom">Raum verlassen</button></div></div>`;
 }
 // Beitritt über #raum-CODE, Startseite am Server-PC über #start
-const roomHash = () => { const m = /^#raum-([A-Z0-9]{6})$/i.exec(location.hash); return m ? m[1].toUpperCase() : ""; };
+const roomHash = () => { const m = /^#raum-([A-Z0-9]{6})(?:\.(\d{6}))?$/i.exec(location.hash); if (!m) return ""; if (m[2] && !SRV && m[2] !== LINK.pc) linkSet(m[2]); return m[1].toUpperCase(); };
 let JOIN = "", PCSTART = location.hash === "#start";
 const clearHash = () => history.replaceState(null, "", location.href.split("#")[0]);
 function renderJoin(){
@@ -4213,7 +4301,7 @@ function renderJoin(){
   const cfg = netGuestCfg() || {};
   document.getElementById("view").innerHTML = `<div class="card" style="max-width:460px;margin:10px auto;text-align:center"><span class="disc" style="width:96px;display:inline-flex">${icon("glockenturm")}</span><h2>Willkommen am Turm</h2>
   <p class="small">Du trittst dem Spiel des Spielleiters bei. Das Handy hilft nur beim Mitschreiben, gespielt wird am Tisch.</p>
-  ${SRV ? `<div class="row" style="justify-content:center;margin:10px 0"><input type="text" id="joinName" maxlength="30" placeholder="Dein Name" value="${esc(cfg.name || "")}" aria-label="Dein Name" style="min-width:200px"><button class="btn pri" data-join="spieler">Beitreten</button></div>
+  ${hub() ? `<div class="row" style="justify-content:center;margin:10px 0"><input type="text" id="joinName" maxlength="30" placeholder="Dein Name" value="${esc(cfg.name || "")}" aria-label="Dein Name" style="min-width:200px"><button class="btn pri" data-join="spieler">Beitreten</button></div>
   <p class="small muted">Nimm den Namen, unter dem dich der Spielleiter kennt.</p>` : `<p class="bad small">Dieser Link funktioniert nur über den Turmuhr-Server. Scanne den QR-Code beim Spielleiter und sei im selben WLAN wie sein PC.</p>`}
   <p style="margin-top:12px"><button class="btn sm" data-join="cancel">Abbrechen</button></p></div>`;
 }
@@ -4282,7 +4370,7 @@ function vSound(){
   const b = (k, v, l, i, on) => `<button class="btn ${on ? "pri" : ""}" data-snd="${k}" data-v="${v}" style="min-height:52px;flex:1 1 130px">${i} ${l}</button>`;
   const head = snd
     ? `<p><b>Soundanlage verbunden.</b> Die Klänge spielen am PC.</p>`
-    : `<p class="small">Ohne Soundanlage spielt dieses Gerät die Klänge selbst.</p>${!SRV ? srvHelp() : `<p class="small"><b>Soundanlage koppeln:</b> Auf der Startseite des Server-PCs „Dieser PC ist die Soundanlage“ wählen. Ein Code zum Abtippen ist nicht nötig.</p>${S.room ? `<p class="small">Raum ${esc(S.room.code)}: <span class="muted">${esc(NET.status)}</span></p>` : `<button class="btn" data-act="roomOpen">Spielraum öffnen</button>`}`}`;
+    : `<p class="small">Ohne Soundanlage spielt dieses Gerät die Klänge selbst.</p>${!hub() ? srvHelp() : `<p class="small"><b>Soundanlage koppeln:</b> Auf der Startseite des Server-PCs „Dieser PC ist die Soundanlage“ wählen. Ein Code zum Abtippen ist nicht nötig.</p>${S.room ? `<p class="small">Raum ${esc(S.room.code)}: <span class="muted">${esc(NET.status)}</span></p>` : `<button class="btn" data-act="roomOpen">Spielraum öffnen</button>`}`}`;
   return `<div class="card notip"><h2>Soundboard</h2>${head}</div>
   <div class="card notip" style="margin-top:10px"><h3>Musik</h3><div class="row">${SCENES.map(([k,l,i]) => b("scene", k, l, i, SND.scene === k)).join("")}</div>
   <div class="row" style="margin-top:8px;align-items:center"><button class="btn" data-snd="stop" ${ok ? "" : "disabled"}>⏹ Musik aus</button><label class="small" style="flex:1;display:flex;gap:8px;align-items:center">Gesamt <input type="range" id="sndVol" min="0" max="100" value="${Math.round(SND.vol * 100)}" style="flex:1" ${ok ? "" : "disabled"}></label><label class="small" style="flex:1;display:flex;gap:8px;align-items:center;min-width:200px">Musik <input type="range" id="sndMVol" min="0" max="100" value="${Math.round(SND.mvol * 100)}" style="flex:1" ${ok ? "" : "disabled"}></label></div></div>
@@ -4434,8 +4522,8 @@ function nextStep(){
   const ps = S.players;
   if (S.win) return {t:"Spiel vorbei", d: S.win, b:`<button class="btn pri" data-act="goReveal">Auflösung und Spielverlauf</button>`};
   if (S.phase === "setup"){
-    if (!ps.length) return SRV ? {t:"Spieler einladen", d: S.room ? "Teile den Einladungslink, die Spieler landen automatisch in der Liste." : "Raum wird geöffnet …", b:`<button class="btn pri" data-tab="setup">Einladung zeigen</button>`} : {t:"Mit dem PC koppeln", d:"Code vom PC eingeben, dann bekommst du den Einladungslink. Ohne PC: Spieler von Hand eintragen.", b:`<button class="btn pri" data-act="goPair">Code eingeben</button>`};
-    if (!SRV && ps.length < 5) return {t:"Mit dem PC koppeln", d:"Code vom PC eingeben, dann bekommst du Einladungslink und QR-Code. Ohne PC: Spieler von Hand eintragen.", b:`<button class="btn pri" data-act="goPair">Code eingeben</button>`};
+    if (!ps.length) return hub() ? {t:"Spieler einladen", d: S.room ? "Teile den Einladungslink, die Spieler landen automatisch in der Liste." : "Raum wird geöffnet …", b:`<button class="btn pri" data-tab="setup">Einladung zeigen</button>`} : {t:"Mit dem PC koppeln", d:"Code vom PC eingeben, dann bekommst du den Einladungslink. Ohne PC: Spieler von Hand eintragen.", b:`<button class="btn pri" data-act="goPair">Code eingeben</button>`};
+    if (!hub() && ps.length < 5) return {t:"Mit dem PC koppeln", d:"Code vom PC eingeben, dann bekommst du Einladungslink und QR-Code. Ohne PC: Spieler von Hand eintragen.", b:`<button class="btn pri" data-act="goPair">Code eingeben</button>`};
     if (ps.length < 5) return {t:"Auf Spieler warten", d:`${ps.length} von mindestens 5.${S.room ? " Einladungslink und QR-Code stehen unter Aufbau." : ""}`, b:`<button class="btn pri" data-tab="setup">${S.room ? "Einladung zeigen" : "Zum Aufbau"}</button>`};
     if (ps.some(p => !p.role)) return {t:"Rollen verteilen", d:`${ps.filter(p => !p.role).length} Spieler ohne Rolle.`, b:`<button class="btn pri" data-act="draw">Zufällig aus dem Skript ziehen</button><button class="btn" data-tab="setup">Selbst verteilen</button>`};
     const is = setupIssues(), e = is.filter(x => x.lvl === "err");
@@ -4550,6 +4638,6 @@ render();
 initStore();
 if (readShare()) offerShare();
 srvCheck().then(() => { if (MODE === "sound" && SRV){ if (!(netGuestCfg() || {}).kind){ netJoin("", "sound"); } pairHost(); }
-  if (MODE === "spielleiter" && SRV && !S.room && !offNet() && (S.phase === "setup" || KOP)) roomOpen(); render(); if (MODE === "spielleiter" && S.room && !offNet()) netHost(); else netRetry(); });
+  if (MODE === "spielleiter" && hub() && !S.room && !offNet() && (S.phase === "setup" || KOP)) roomOpen(); render(); if (MODE === "spielleiter" && S.room && !offNet()) netHost(); else netRetry(); });
 </script>
 <script>if ("serviceWorker" in navigator){ const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update()).catch(() => {}); let done = false; navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !done){ done = true; location.reload(); } }); }</script></body></html>
