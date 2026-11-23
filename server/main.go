@@ -19,6 +19,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -175,7 +176,7 @@ func apiHost(w http.ResponseWriter, r *http.Request) {
 	defer h.mu.Unlock()
 	if h.key != "" && !h.isHost(in.Key) {
 		// Übernahme nur, wenn kein anderes Spielleiter-Gerät verbunden ist, oder direkt vom Server-PC aus
-		if len(h.hosts) > 0 && !isLoopback(r.RemoteAddr) {
+		if len(h.hosts) > 0 && (!isLoopback(r.RemoteAddr) || r.Header.Get("X-Turmuhr-Relay") != "") {
 			reply(w, 409, map[string]any{"error": "Ein anderes Spielleiter-Gerät ist gerade mit dem Server verbunden. Schließ die App dort, dann klappt es hier."})
 			return
 		}
@@ -348,24 +349,19 @@ func apiSstate(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/events: Server-Sent Events. Spielleiter mit ?role=host&key=…, sonst ?role=spieler|sound&tok=…&name=…&code=…
-func apiEvents(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "kein Streaming", 500)
-		return
-	}
-	q := r.URL.Query()
+// attach meldet ein Gerät an (Spielleiter, Spieler oder Soundanlage) und liefert den Kanal für seine Nachrichten.
+// Gemeinsam für direkte Verbindungen (SSE) und für Geräte, die über die PC-Seite weitergeleitet werden.
+func attach(q url.Values) (c *client, detach func(), status int) {
 	role := q.Get("role")
-	c := &client{ch: make(chan []byte, 64), done: make(chan struct{})}
+	c = &client{ch: make(chan []byte, 64), done: make(chan struct{})}
 	h := H
 	var x *guest
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	switch role {
 	case "host":
 		if !h.isHost(q.Get("key")) {
-			h.mu.Unlock()
-			http.Error(w, "nicht erlaubt", 403)
-			return
+			return nil, nil, 403
 		}
 		h.hosts[c] = true
 		c.ch <- h.guestList()
@@ -375,17 +371,13 @@ func apiEvents(w http.ResponseWriter, r *http.Request) {
 	case "spieler", "sound":
 		tok := q.Get("tok")
 		if len(tok) < 16 || len(tok) > 40 {
-			h.mu.Unlock()
-			http.Error(w, "ungültig", 400)
-			return
+			return nil, nil, 400
 		}
 		x = h.guests[tok]
 		if x == nil {
 			h.prune()
 			if len(h.guests) >= maxGuests {
-				h.mu.Unlock()
-				http.Error(w, "zu viele Geräte", 503)
-				return
+				return nil, nil, 503
 			}
 			x = &guest{Tok: tok, conns: map[*client]bool{}}
 			h.guests[tok] = x
@@ -414,20 +406,9 @@ func apiEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		h.toHosts(h.guestList())
 	default:
-		h.mu.Unlock()
-		http.Error(w, "ungültig", 400)
-		return
+		return nil, nil, 400
 	}
-	h.mu.Unlock()
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Accel-Buffering", "no")
-	fmt.Fprint(w, "retry: 2000\n\n")
-	fl.Flush()
-	tick := time.NewTicker(20 * time.Second)
-	defer tick.Stop()
-	defer func() {
+	detach = func() {
 		h.mu.Lock()
 		if x != nil {
 			delete(x.conns, c)
@@ -437,7 +418,30 @@ func apiEvents(w http.ResponseWriter, r *http.Request) {
 			delete(h.hosts, c)
 		}
 		h.mu.Unlock()
-	}()
+	}
+	return c, detach, 200
+}
+
+// GET /api/events: Server-Sent Events. Spielleiter mit ?role=host&key=…, sonst ?role=spieler|sound&tok=…&name=…&code=…
+func apiEvents(w http.ResponseWriter, r *http.Request) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "kein Streaming", 500)
+		return
+	}
+	c, detach, st := attach(r.URL.Query())
+	if c == nil {
+		http.Error(w, http.StatusText(st), st)
+		return
+	}
+	defer detach()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	fmt.Fprint(w, "retry: 2000\n\n")
+	fl.Flush()
+	tick := time.NewTicker(20 * time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case b := <-c.ch:
@@ -452,6 +456,150 @@ func apiEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+/*
+Weiterleitung über die PC-Seite: Handys mit der installierten App (GitHub) erreichen den Server per WebRTC
+
+	über die Seite im Browser des PCs. Diese Seite öffnet EINEN Datenstrom (/api/relay) für alle weitergeleiteten
+	Geräte, sonst wären es im Browser höchstens 6 gleichzeitige Verbindungen. Nur vom PC selbst aus erlaubt.
+*/
+type relaySess struct {
+	c      *client
+	detach func()
+}
+
+var relay = struct {
+	mu   sync.Mutex
+	out  chan []byte
+	sess map[string]*relaySess
+}{sess: map[string]*relaySess{}}
+
+func localOnly(w http.ResponseWriter, r *http.Request) bool {
+	if !isLoopback(r.RemoteAddr) || r.Header.Get("X-Turmuhr-Relay") != "" {
+		http.Error(w, "nur vom Server-PC", 403)
+		return false
+	}
+	return true
+}
+
+func relayClose(sid string) {
+	relay.mu.Lock()
+	s := relay.sess[sid]
+	delete(relay.sess, sid)
+	relay.mu.Unlock()
+	if s != nil {
+		s.c.close()
+		s.detach()
+	}
+}
+
+func relaySend(b []byte) {
+	relay.mu.Lock()
+	out := relay.out
+	relay.mu.Unlock()
+	if out != nil {
+		select {
+		case out <- b:
+		default:
+		}
+	}
+}
+
+// GET /api/relay: ein Datenstrom mit den Nachrichten aller weitergeleiteten Geräte, je mit Sitzungs-ID
+func apiRelay(w http.ResponseWriter, r *http.Request) {
+	if !localOnly(w, r) {
+		return
+	}
+	fl := w.(http.Flusher)
+	out := make(chan []byte, 512)
+	relay.mu.Lock()
+	old := relay.sess
+	relay.out, relay.sess = out, map[string]*relaySess{}
+	relay.mu.Unlock()
+	for _, s := range old {
+		s.c.close()
+		s.detach()
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprint(w, "retry: 1000\n\n")
+	fl.Flush()
+	tick := time.NewTicker(20 * time.Second)
+	defer tick.Stop()
+	defer func() {
+		relay.mu.Lock()
+		if relay.out == out {
+			relay.out = nil
+			for sid, s := range relay.sess {
+				s.c.close()
+				s.detach()
+				delete(relay.sess, sid)
+			}
+		}
+		relay.mu.Unlock()
+	}()
+	for {
+		select {
+		case b := <-out:
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			fl.Flush()
+		case <-tick.C:
+			fmt.Fprint(w, ": ping\n\n")
+			fl.Flush()
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+// POST /api/ropen {sid, q}: ein weitergeleitetes Gerät anmelden (q wie bei /api/events)
+func apiRopen(w http.ResponseWriter, r *http.Request) {
+	if !localOnly(w, r) {
+		return
+	}
+	var in struct{ Sid, Q string }
+	if readJSON(r, &in) != nil || in.Sid == "" || len(in.Sid) > 40 {
+		reply(w, 400, map[string]any{"error": "ungültig"})
+		return
+	}
+	q, err := url.ParseQuery(in.Q)
+	if err != nil {
+		reply(w, 400, map[string]any{"error": "ungültig"})
+		return
+	}
+	relayClose(in.Sid)
+	c, detach, st := attach(q)
+	if c == nil {
+		reply(w, 200, map[string]any{"ok": true, "status": st})
+		return
+	}
+	relay.mu.Lock()
+	relay.sess[in.Sid] = &relaySess{c, detach}
+	relay.mu.Unlock()
+	go func(sid string) {
+		for {
+			select {
+			case b := <-c.ch:
+				relaySend(msg(map[string]any{"s": sid, "d": string(b)}))
+			case <-c.done:
+				relaySend(msg(map[string]any{"s": sid, "x": "closed"}))
+				return
+			}
+		}
+	}(in.Sid)
+	reply(w, 200, map[string]any{"ok": true, "status": 200})
+}
+
+// POST /api/rclose {sid}
+func apiRclose(w http.ResponseWriter, r *http.Request) {
+	if !localOnly(w, r) {
+		return
+	}
+	var in struct{ Sid string }
+	readJSON(r, &in)
+	relayClose(in.Sid)
+	reply(w, 200, map[string]any{"ok": true})
 }
 
 func lanURLs(port int) []string {
@@ -483,6 +631,30 @@ func lanURLs(port int) []string {
 	return out
 }
 
+// Kopplungscode: 6 Ziffern. Für die üblichen Heim-, Location- und Hotspot-Netze steckt die Adresse
+// im Code selbst (so klappt es auch ohne Internet), sonst eine Zufallszahl, die nur über den Vermittlungsdienst gefunden wird.
+//
+//	1xxxxx = 192.168.a.b:8080 mit xxxxx = a*256+b
+//	2000xx = 172.20.10.b:8080 (iPhone-Hotspot)
+//	3xxxxx-9xxxxx = nur über das Internet
+func pairCode(urls []string, port int) string {
+	if len(urls) > 0 && port == 8080 {
+		var a, b, c, d int
+		if n, _ := fmt.Sscanf(urls[0], "http://%d.%d.%d.%d:", &a, &b, &c, &d); n == 4 {
+			if a == 192 && b == 168 {
+				return fmt.Sprintf("%06d", 100000+c*256+d)
+			}
+			if a == 172 && b == 20 && c == 10 {
+				return fmt.Sprintf("%06d", 200000+d)
+			}
+		}
+	}
+	x := make([]byte, 4)
+	rand.Read(x)
+	r := (int(x[0])<<16 | int(x[1])<<8 | int(x[2])) % 700000
+	return fmt.Sprintf("%06d", 300000+r)
+}
+
 func main() {
 	initConsole()
 	port := flag.Int("port", 8080, "Port")
@@ -499,9 +671,13 @@ func main() {
 	mux.HandleFunc("POST /api/bots", apiBots)
 	mux.HandleFunc("POST /api/sstate", apiSstate)
 	mux.HandleFunc("GET /api/events", apiEvents)
+	mux.HandleFunc("GET /api/relay", apiRelay)
+	mux.HandleFunc("POST /api/ropen", apiRopen)
+	mux.HandleFunc("POST /api/rclose", apiRclose)
 	var urls []string
+	var pair string
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, 200, map[string]any{"server": "turmuhr", "version": version, "urls": urls})
+		reply(w, 200, map[string]any{"server": "turmuhr", "version": version, "urls": urls, "pair": pair})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
@@ -527,11 +703,15 @@ func main() {
 		os.Exit(1)
 	}
 	urls = lanURLs(*port)
+	pair = pairCode(urls, *port)
 	local := fmt.Sprintf("http://localhost:%d/", *port)
 
 	fmt.Println("════════════════════════════════════════════════════")
 	fmt.Println("  Turmuhr-Server", version, "läuft")
 	fmt.Println("════════════════════════════════════════════════════")
+	fmt.Println()
+	fmt.Println("  KOPPLUNGSCODE:   ", pair[:3]+" "+pair[3:])
+	fmt.Println("  Im Spielleiter-Handy unter Aufbau → „Mit dem PC koppeln“ eingeben.")
 	fmt.Println()
 	fmt.Println("  Auf diesem PC:  ", local)
 	if len(urls) == 0 {
@@ -543,7 +723,7 @@ func main() {
 		}
 	}
 	fmt.Println()
-	fmt.Println("  Der Browser öffnet sich mit einem QR-Code für Spielleiter und Spieler.")
+	fmt.Println("  Der Browser öffnet sich als Soundanlage und zeigt den Code groß an.")
 	fmt.Println("  Fragt die Firewall nach: Zugriff im privaten Netzwerk erlauben.")
 	fmt.Println("  Zum Beenden dieses Fenster schließen (oder Strg+C).")
 	fmt.Println()
