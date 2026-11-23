@@ -483,6 +483,30 @@ func lanURLs(port int) []string {
 	return out
 }
 
+// Kopplungscode: 6 Ziffern. Für die üblichen Heim-, Location- und Hotspot-Netze steckt die Adresse
+// im Code selbst (so klappt es auch ohne Internet), sonst eine Zufallszahl, die nur über den Vermittlungsdienst gefunden wird.
+//
+//	1xxxxx = 192.168.a.b:8080 mit xxxxx = a*256+b
+//	2000xx = 172.20.10.b:8080 (iPhone-Hotspot)
+//	3xxxxx-9xxxxx = nur über das Internet
+func pairCode(urls []string, port int) string {
+	if len(urls) > 0 && port == 8080 {
+		var a, b, c, d int
+		if n, _ := fmt.Sscanf(urls[0], "http://%d.%d.%d.%d:", &a, &b, &c, &d); n == 4 {
+			if a == 192 && b == 168 {
+				return fmt.Sprintf("%06d", 100000+c*256+d)
+			}
+			if a == 172 && b == 20 && c == 10 {
+				return fmt.Sprintf("%06d", 200000+d)
+			}
+		}
+	}
+	x := make([]byte, 4)
+	rand.Read(x)
+	r := (int(x[0])<<16 | int(x[1])<<8 | int(x[2])) % 700000
+	return fmt.Sprintf("%06d", 300000+r)
+}
+
 func main() {
 	initConsole()
 	port := flag.Int("port", 8080, "Port")
@@ -500,8 +524,9 @@ func main() {
 	mux.HandleFunc("POST /api/sstate", apiSstate)
 	mux.HandleFunc("GET /api/events", apiEvents)
 	var urls []string
+	var pair string
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		reply(w, 200, map[string]any{"server": "turmuhr", "version": version, "urls": urls})
+		reply(w, 200, map[string]any{"server": "turmuhr", "version": version, "urls": urls, "pair": pair})
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
@@ -527,11 +552,15 @@ func main() {
 		os.Exit(1)
 	}
 	urls = lanURLs(*port)
+	pair = pairCode(urls, *port)
 	local := fmt.Sprintf("http://localhost:%d/", *port)
 
 	fmt.Println("════════════════════════════════════════════════════")
 	fmt.Println("  Turmuhr-Server", version, "läuft")
 	fmt.Println("════════════════════════════════════════════════════")
+	fmt.Println()
+	fmt.Println("  KOPPLUNGSCODE:   ", pair[:3]+" "+pair[3:])
+	fmt.Println("  Im Spielleiter-Handy unter Aufbau → „Mit dem PC koppeln“ eingeben.")
 	fmt.Println()
 	fmt.Println("  Auf diesem PC:  ", local)
 	if len(urls) == 0 {
@@ -543,7 +572,7 @@ func main() {
 		}
 	}
 	fmt.Println()
-	fmt.Println("  Der Browser öffnet sich mit einem QR-Code für Spielleiter und Spieler.")
+	fmt.Println("  Der Browser öffnet sich als Soundanlage und zeigt den Code groß an.")
 	fmt.Println("  Fragt die Firewall nach: Zugriff im privaten Netzwerk erlauben.")
 	fmt.Println("  Zum Beenden dieses Fenster schließen (oder Strg+C).")
 	fmt.Println()
