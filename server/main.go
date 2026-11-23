@@ -8,6 +8,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
@@ -49,6 +50,8 @@ func (c *client) close() { c.once.Do(func() { close(c.done) }) }
 
 type guest struct {
 	Tok, Name, Kind string
+	Code            string // Raum, dem dieses Handy beigetreten ist
+	Bot             bool   // Simulation: Bot-Spieler ohne eigenes Gerät
 	conns           map[*client]bool
 	seen            time.Time
 }
@@ -88,10 +91,14 @@ func (h *hub) guestList() []byte {
 		Name string `json:"name"`
 		Kind string `json:"kind"`
 		On   bool   `json:"on"`
+		Bot  bool   `json:"bot,omitempty"`
 	}
 	l := []g{}
 	for _, x := range h.guests {
-		l = append(l, g{x.Tok, x.Name, x.Kind, len(x.conns) > 0})
+		if x.Kind == "spieler" && (h.code == "" || x.Code != h.code) {
+			continue // Handys aus einem anderen (alten) Raum gehören nicht in diese Liste
+		}
+		l = append(l, g{x.Tok, x.Name, x.Kind, len(x.conns) > 0 || x.Bot, x.Bot})
 	}
 	sort.Slice(l, func(i, j int) bool { return l[i].Name < l[j].Name })
 	return msg(map[string]any{"k": "guests", "list": l})
@@ -116,12 +123,32 @@ func (h *hub) toGuest(x *guest, b []byte) {
 	}
 }
 
+func (h *hub) dropBots() {
+	for t, x := range h.guests {
+		if x.Bot {
+			for c := range x.conns {
+				c.close()
+			}
+			delete(h.guests, t)
+		}
+	}
+}
+
 func (h *hub) prune() {
 	for t, x := range h.guests {
 		if len(x.conns) == 0 && time.Since(x.seen) > 6*time.Hour {
 			delete(h.guests, t)
 		}
 	}
+}
+
+func isLoopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func readJSON(r *http.Request, v any) error {
@@ -147,12 +174,19 @@ func apiHost(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.key != "" && !h.isHost(in.Key) {
-		reply(w, 409, map[string]any{"error": "Dieser Server gehört gerade einem anderen Spielleiter-Gerät. Starte das Server-Programm neu, um ihn zu übernehmen."})
-		return
+		// Übernahme nur, wenn kein anderes Spielleiter-Gerät verbunden ist, oder direkt vom Server-PC aus
+		if len(h.hosts) > 0 && !isLoopback(r.RemoteAddr) {
+			reply(w, 409, map[string]any{"error": "Ein anderes Spielleiter-Gerät ist gerade mit dem Server verbunden. Schließ die App dort, dann klappt es hier."})
+			return
+		}
+		for c := range h.hosts {
+			c.close()
+		}
 	}
 	if h.code != in.Code { // neuer Raum: alte Daten weg, Handys des alten Raums erfahren es
 		old := h.code
 		h.code, h.pub, h.me = in.Code, nil, map[string][]byte{}
+		h.dropBots()
 		if old != "" {
 			for _, x := range h.guests {
 				if x.Kind == "spieler" {
@@ -182,6 +216,8 @@ func apiClose(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.code, h.key, h.pub, h.me = "", "", nil, map[string][]byte{}
+	h.dropBots()
+	h.toHosts(h.guestList())
 	for c := range h.hosts {
 		c.close()
 	}
@@ -218,7 +254,7 @@ func apiPush(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, x := range h.guests {
-		if x.Kind != "spieler" {
+		if x.Kind != "spieler" || x.Code != h.code {
 			continue
 		}
 		if pubChanged {
@@ -228,6 +264,36 @@ func apiPush(w http.ResponseWriter, r *http.Request) {
 			h.toGuest(x, h.meFor(x))
 		}
 	}
+	reply(w, 200, map[string]any{"ok": true})
+}
+
+// POST /api/bots {key, n}: Simulation, legt n Bot-Spieler an, die wie echte Handys behandelt werden
+var botNames = []string{"Anna", "Ben", "Cem", "Dora", "Emil", "Fritz", "Gül", "Hanna", "Ida", "Jonas", "Karla", "Luca", "Mia", "Nico", "Olga"}
+
+func apiBots(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Key string
+		N   int
+	}
+	if readJSON(r, &in) != nil || in.N < 1 || in.N > 15 {
+		reply(w, 400, map[string]any{"error": "ungültig"})
+		return
+	}
+	h := H
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.isHost(in.Key) {
+		reply(w, 403, map[string]any{"error": "nicht erlaubt"})
+		return
+	}
+	h.dropBots()
+	b := make([]byte, 12)
+	for i := 0; i < in.N; i++ {
+		rand.Read(b)
+		tok := fmt.Sprintf("bot%x", b)
+		h.guests[tok] = &guest{Tok: tok, Name: botNames[i] + " (Bot)", Kind: "spieler", Code: h.code, Bot: true, conns: map[*client]bool{}, seen: time.Now()}
+	}
+	h.toHosts(h.guestList())
 	reply(w, 200, map[string]any{"ok": true})
 }
 
@@ -331,6 +397,7 @@ func apiEvents(w http.ResponseWriter, r *http.Request) {
 		x.conns[c] = true
 		if role == "spieler" {
 			code := strings.ToUpper(q.Get("code"))
+			x.Code = code
 			switch {
 			case h.code == "":
 				c.ch <- msg(map[string]any{"k": "wait"})
@@ -429,6 +496,7 @@ func main() {
 	mux.HandleFunc("POST /api/close", apiClose)
 	mux.HandleFunc("POST /api/push", apiPush)
 	mux.HandleFunc("POST /api/snd", apiSnd)
+	mux.HandleFunc("POST /api/bots", apiBots)
 	mux.HandleFunc("POST /api/sstate", apiSstate)
 	mux.HandleFunc("GET /api/events", apiEvents)
 	var urls []string
